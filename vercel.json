@@ -1,25 +1,15 @@
 {
   "version": 2,
   "name": "whatsapp-message-system",
-  "builds": [
-    {
-      "src": "index.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/index.js"
-    }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "functions": {
     "index.js": {
       "maxDuration": 30
     }
   },
-  "regions": ["iad1"]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.js"
+    }
+  ]
 }
