@@ -74,7 +74,7 @@ class WebhookService {
                     body: req.body,
                     processingStatus: 'failed',
                     processingTime: Date.now() - startTime,
-                    errors: [{
+                    errorLogs: [{
                         message: error.message,
                         stack: error.stack,
                         timestamp: new Date()

@@ -35,8 +35,6 @@ class Database {
                 useUnifiedTopology: true,
                 serverSelectionTimeoutMS: 5000, // 5 seconds timeout
                 socketTimeoutMS: 45000, // 45 seconds socket timeout
-                bufferCommands: false,
-                bufferMaxEntries: 0
             });
             
             console.log('✅ MongoDB connected successfully');

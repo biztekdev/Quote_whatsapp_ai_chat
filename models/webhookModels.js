@@ -111,7 +111,7 @@ const webhookCallSchema = new mongoose.Schema({
     },
     
     // Error handling
-    errors: [{
+    errorLogs: [{
         message: String,
         stack: String,
         timestamp: {
@@ -326,7 +326,7 @@ const systemMetricsSchema = new mongoose.Schema({
     }],
     
     // Error tracking
-    errors: {
+    errorStats: {
         total: { type: Number, default: 0 },
         byType: {
             type: Map,
