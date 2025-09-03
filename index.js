@@ -6,11 +6,24 @@ import pkg from 'node-wit';
 const { Wit } = pkg;
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
+import database, { connectDB } from './config/database.js';
+import webhookService from './services/webhookService.js';
 
 // Load environment variables
 dotenv.config();
 
 console.log('Environment loaded, starting server...');
+
+// Initialize database connection
+let dbConnected = false;
+try {
+    await connectDB();
+    dbConnected = true;
+    console.log('✅ Database connected successfully');
+} catch (error) {
+    console.warn('⚠️  Database connection failed, continuing without MongoDB:', error.message);
+    console.log('💡 To enable database features, please configure MONGODB_URI in .env');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,7 +56,8 @@ app.get('/', (req, res) => {
         timestamp: new Date().toISOString(),
         status: 'active',
         phoneNumber: process.env.WHATSAPP_PHONE_NUMBER_ID,
-        version: process.env.WHATSAPP_VERSION
+        version: process.env.WHATSAPP_VERSION,
+        database: dbConnected ? 'connected' : 'disconnected'
     });
 });
 
@@ -65,9 +79,12 @@ app.get('/webhook', (req, res) => {
 
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
+    const startTime = Date.now();
+    let processingResult = {};
+    
     try {
         const body = req.body;
-        console.log('Incoming webhook:', JSON.stringify(body, null, 2));
+        console.log('📨 Incoming webhook:', JSON.stringify(body, null, 2));
         
         if (body.object === 'whatsapp_business_account') {
             body.entry?.forEach(async (entry) => {
@@ -78,17 +95,50 @@ app.post('/webhook', async (req, res) => {
                     
                     if (messages) {
                         for (const message of messages) {
-                            await messageHandler.handleIncomingMessage(message, value);
+                            const result = await messageHandler.handleIncomingMessage(message, value);
+                            processingResult = { ...processingResult, ...result };
                         }
                     }
                 }
             });
         }
         
-        res.status(200).send('OK');
+        // Store webhook call in database (if connected)
+        if (dbConnected) {
+            try {
+                await webhookService.storeWebhookCall(req, res, processingResult);
+            } catch (dbError) {
+                console.error('⚠️  Database storage failed:', dbError.message);
+                // Continue processing even if database fails
+            }
+        }
+        
+        const processingTime = Date.now() - startTime;
+        console.log(`⚡ Webhook processed in ${processingTime}ms`);
+        
+        res.status(200).json({
+            status: 'ok',
+            processingTime: `${processingTime}ms`,
+            timestamp: new Date().toISOString()
+        });
+        
     } catch (error) {
-        console.error('Webhook error:', error);
-        res.status(500).send('Internal Server Error');
+        console.error('❌ Webhook error:', error);
+        
+        // Store error in database (if connected)
+        if (dbConnected) {
+            try {
+                await webhookService.storeWebhookCall(req, res, { error: error.message });
+            } catch (dbError) {
+                console.error('⚠️  Error storage failed:', dbError.message);
+            }
+        }
+        
+        res.status(500).json({
+            error: 'Internal Server Error',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
@@ -203,13 +253,65 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         services: {
             whatsapp: !!process.env.WHATSAPP_ACCESS_TOKEN,
-            wit: !!process.env.WIT_AI_ACCESS_TOKEN
+            wit: !!process.env.WIT_AI_ACCESS_TOKEN,
+            database: dbConnected
         },
         config: {
             phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
             version: process.env.WHATSAPP_VERSION
         }
     });
+});
+
+// Database Analytics Routes (only if database is connected)
+app.get('/analytics/webhooks', async (req, res) => {
+    if (!dbConnected) {
+        return res.status(503).json({
+            error: 'Database not connected',
+            message: 'Please configure MONGODB_URI in .env file'
+        });
+    }
+    
+    try {
+        const stats = await webhookService.getWebhookStats();
+        res.json({
+            success: true,
+            data: stats,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Analytics error:', error);
+        res.status(500).json({
+            error: 'Failed to get webhook analytics',
+            details: error.message
+        });
+    }
+});
+
+app.get('/analytics/recent-calls', async (req, res) => {
+    if (!dbConnected) {
+        return res.status(503).json({
+            error: 'Database not connected',
+            message: 'Please configure MONGODB_URI in .env file'
+        });
+    }
+    
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const recentCalls = await webhookService.getRecentCalls(limit);
+        res.json({
+            success: true,
+            data: recentCalls,
+            count: recentCalls.length,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Recent calls error:', error);
+        res.status(500).json({
+            error: 'Failed to get recent calls',
+            details: error.message
+        });
+    }
 });
 
 // Error handling middleware
