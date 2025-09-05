@@ -1,18 +1,19 @@
 import pkg from 'node-wit';
 const { Wit, log } = pkg;
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 class WitService {
     constructor() {
-        this.accessToken = process.env.WIT_AI_ACCESS_TOKEN ?? "FOJSFXMTHKMA5RL4CO2GS2KO32ZNRGZO";
+        this.accessToken = process.env.WIT_AI_ACCESS_TOKEN;
         this.client = null;
         
         this.initializeClient();
     }
 
     initializeClient() {
+        console.log('Environment variables check:');
+        console.log('WIT_AI_ACCESS_TOKEN:', process.env.WIT_AI_ACCESS_TOKEN ? 'Present' : 'Missing');
+        console.log('WHATSAPP_ACCESS_TOKEN:', process.env.WHATSAPP_ACCESS_TOKEN ? 'Present' : 'Missing');
+        
         if (!this.accessToken) {
             console.warn('Wit.ai access token not found. WitService will run in mock mode.');
             return;
@@ -35,8 +36,10 @@ class WitService {
      */
     async processMessage(message, options = {}) {
         try {
+            console.log(`Token for Wit.ai: ${this.accessToken}`);
             if (!this.client) {
                 console.log('Wit.ai client not initialized');
+                
                 return this.getMockResponse(message);
             }
 
@@ -45,6 +48,7 @@ class WitService {
             }
 
             console.log(`Processing message through Wit.ai: "${message}"`);
+            console.log(`Token for Wit.ai: "${this.accessToken}"`);
 
             const response = await this.client.message(message, options);
             

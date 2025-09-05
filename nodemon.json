@@ -1,0 +1,25 @@
+{
+  "watch": [
+    "index.js",
+    "services/",
+    "handlers/",
+    "config/",
+    "api/",
+    "models/"
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "node_modules/",
+    "*.log",
+    ".git/",
+    "*.md"
+  ],
+  "delay": 1000,
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "verbose": true,
+  "restartable": "rs",
+  "colours": true,
+  "exec": "node index.js"
+}

@@ -6,8 +6,11 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "node test.js"
+    "dev": "nodemon",
+    "dev:debug": "nodemon --inspect",
+    "test": "node test.js",
+    "lint": "echo 'No linter configured'",
+    "clean": "rm -rf node_modules package-lock.json && npm install"
   },
   "keywords": [
     "whatsapp",
