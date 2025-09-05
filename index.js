@@ -2,12 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
-import pkg from 'node-wit';
-const { Wit } = pkg;
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
-import database, { connectDB } from './config/database.js';
-import webhookService from './services/webhookService.js';
+import WitService from './services/witService.js';
 
 // Load environment variables
 dotenv.config();
@@ -26,7 +23,7 @@ try {
 }
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 console.log(`Port set to: ${PORT}`);
 
@@ -39,13 +36,11 @@ app.use(bodyParser.urlencoded({ extended: true }));
 console.log('Initializing WhatsApp service...');
 const whatsappService = new WhatsAppService();
 
-console.log('Initializing Wit.ai...');
-const wit = new Wit({
-    accessToken: process.env.WIT_AI_ACCESS_TOKEN,
-});
+console.log('Initializing WitService...');
+const witService = new WitService();
 
 console.log('Initializing message handler...');
-const messageHandler = new MessageHandler(whatsappService, wit);
+const messageHandler = new MessageHandler(whatsappService, witService.client);
 
 console.log('Services initialized successfully!');
 
@@ -60,6 +55,21 @@ app.get('/', (req, res) => {
         database: dbConnected ? 'connected' : 'disconnected'
     });
 });
+
+//     const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+    
+//     const mode = req.query['hub.mode'];
+//     const token = req.query['hub.verify_token'];
+//     const challenge = req.query['hub.challenge'];
+    
+//     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+//         console.log('Webhook verified successfully!');
+//         res.status(200).send(challenge);
+//     } else {
+//         res.status(403).send('Forbidden');
+//     }
+// });
+
 
 // WhatsApp webhook verification
 app.get('/webhook', (req, res) => {
@@ -242,6 +252,76 @@ app.post('/send-buttons', async (req, res) => {
         res.status(500).json({
             error: 'Failed to send button message',
             details: error.message
+        });
+    }
+});
+
+// Wit.ai testing route
+app.post('/wit/testing', async (req, res) => {
+    try {
+        const { message, options = {} } = req.body;
+        
+        if (!message) {
+            return res.status(400).json({
+                success: false,
+                error: 'Message is required',
+                message: 'Please provide a message in the request body'
+            });
+        }
+
+        console.log(`Wit.ai testing request: "${message}"`);
+        
+        const result = await witService.processMessage(message, options);
+        
+        // Extract entities from the Wit.ai response
+        const entitiesArray = witService.extractEntities(result.data);
+        const data = witService.getRequiredDataFromEntities(entitiesArray);
+        const dimensions = witService.getDimensionsFromEntities(entitiesArray);
+        console.log(`Required Data:`, data);
+        console.log(`Dimensions:`, dimensions);
+        
+        res.json({
+            success: true,
+            originalMessage: message,
+            witResponse: result,
+            entities: entitiesArray,
+            entityCount: entitiesArray.length,
+            requiredData: data,
+            dimensions: dimensions,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Wit.ai testing error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process message with Wit.ai',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Wit.ai status and test connection
+app.get('/wit/status', async (req, res) => {
+    try {
+        const status = witService.getStatus();
+        const testResult = await witService.testConnection();
+        
+        res.json({
+            success: true,
+            status: status,
+            testResult: testResult,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Wit.ai status error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get Wit.ai status',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
