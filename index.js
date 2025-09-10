@@ -94,6 +94,8 @@ app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
+    smartLogger.info('Webhook verification');
+    smartLogger.info(JSON.stringify({...req.body,...req,query}));
   
     if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
       return res.status(200).send(challenge);
