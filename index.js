@@ -75,11 +75,11 @@ app.use('/api/logs', logRoutes);
 app.use(express.static('public'));
 
 //     const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
-    
+
 //     const mode = req.query['hub.mode'];
 //     const token = req.query['hub.verify_token'];
 //     const challenge = req.query['hub.challenge'];
-    
+
 //     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
 //         console.log('Webhook verified successfully!');
 //         res.status(200).send(challenge);
@@ -95,14 +95,14 @@ app.get("/webhook", (req, res) => {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     smartLogger.info('Webhook verification');
-    smartLogger.info(JSON.stringify({...req.body,...req,query}));
-  
+    smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
+
     if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
-      return res.status(200).send(challenge);
+        return res.status(200).send(challenge);
     }
     return res.sendStatus(403);
-  });
-  
+});
+
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
@@ -110,18 +110,18 @@ app.post('/webhook', async (req, res) => {
     smartLogger.info('Calling webhook');
     res.status(200).send('Webhook post verified successfully!');
 
-    
+
     // try {
     //     const body = req.body;
     //     console.log('📨 Incoming webhook:', JSON.stringify(body, null, 2));
-        
+
     //     if (body.object === 'whatsapp_business_account') {
     //         body.entry?.forEach(async (entry) => {
     //             const changes = entry.changes?.[0];
     //             if (changes?.field === 'messages') {
     //                 const value = changes.value;
     //                 const messages = value.messages;
-                    
+
     //                 if (messages) {
     //                     for (const message of messages) {
     //                         const result = await messageHandler.handleIncomingMessage(message, value);
@@ -131,7 +131,7 @@ app.post('/webhook', async (req, res) => {
     //             }
     //         });
     //     }
-        
+
     //     // Store webhook call in database (if connected)
     //     if (dbConnected) {
     //         try {
@@ -141,19 +141,19 @@ app.post('/webhook', async (req, res) => {
     //             // Continue processing even if database fails
     //         }
     //     }
-        
+
     //     const processingTime = Date.now() - startTime;
     //     console.log(`⚡ Webhook processed in ${processingTime}ms`);
-        
+
     //     res.status(200).json({
     //         status: 'ok',
     //         processingTime: `${processingTime}ms`,
     //         timestamp: new Date().toISOString()
     //     });
-        
+
     // } catch (error) {
     //     console.error('❌ Webhook error:', error);
-        
+
     //     // Store error in database (if connected)
     //     if (dbConnected) {
     //         try {
@@ -162,7 +162,7 @@ app.post('/webhook', async (req, res) => {
     //             console.error('⚠️  Error storage failed:', dbError.message);
     //         }
     //     }
-        
+
     //     res.status(500).json({
     //         error: 'Internal Server Error',
     //         message: error.message,
@@ -175,13 +175,13 @@ app.post('/webhook', async (req, res) => {
 app.post('/send-message', async (req, res) => {
     try {
         const { to, message, type = 'text' } = req.body;
-        
+
         if (!to || !message) {
             return res.status(400).json({
                 error: 'Missing required fields: to, message'
             });
         }
-        
+
         const result = await whatsappService.sendMessage(to, message, type);
         res.json({
             success: true,
@@ -201,13 +201,13 @@ app.post('/send-message', async (req, res) => {
 app.post('/send-template', async (req, res) => {
     try {
         const { to, templateName, languageCode = 'en_US', components } = req.body;
-        
+
         if (!to || !templateName) {
             return res.status(400).json({
                 error: 'Missing required fields: to, templateName'
             });
         }
-        
+
         const result = await whatsappService.sendTemplateMessage(to, templateName, languageCode, components);
         res.json({
             success: true,
@@ -227,13 +227,13 @@ app.post('/send-template', async (req, res) => {
 app.post('/send-media', async (req, res) => {
     try {
         const { to, mediaUrl, type, caption } = req.body;
-        
+
         if (!to || !mediaUrl || !type) {
             return res.status(400).json({
                 error: 'Missing required fields: to, mediaUrl, type'
             });
         }
-        
+
         const result = await whatsappService.sendMediaMessage(to, mediaUrl, type, caption);
         res.json({
             success: true,
@@ -253,13 +253,13 @@ app.post('/send-media', async (req, res) => {
 app.post('/send-buttons', async (req, res) => {
     try {
         const { to, bodyText, buttons } = req.body;
-        
+
         if (!to || !bodyText || !buttons) {
             return res.status(400).json({
                 error: 'Missing required fields: to, bodyText, buttons'
             });
         }
-        
+
         const result = await whatsappService.sendButtonMessage(to, bodyText, buttons);
         res.json({
             success: true,
@@ -279,7 +279,7 @@ app.post('/send-buttons', async (req, res) => {
 app.post('/wit/testing', async (req, res) => {
     try {
         const { message, options = {} } = req.body;
-        
+
         if (!message) {
             return res.status(400).json({
                 success: false,
@@ -289,16 +289,16 @@ app.post('/wit/testing', async (req, res) => {
         }
 
         console.log(`Wit.ai testing request: "${message}"`);
-        
+
         const result = await witService.processMessage(message, options);
-        
+
         // Extract entities from the Wit.ai response
         const entitiesArray = witService.extractEntities(result.data);
         const data = witService.getRequiredDataFromEntities(entitiesArray);
         const dimensions = witService.getDimensionsFromEntities(entitiesArray);
         console.log(`Required Data:`, data);
         console.log(`Dimensions:`, dimensions);
-        
+
         res.json({
             success: true,
             originalMessage: message,
@@ -309,7 +309,7 @@ app.post('/wit/testing', async (req, res) => {
             dimensions: dimensions,
             timestamp: new Date().toISOString()
         });
-        
+
     } catch (error) {
         console.error('Wit.ai testing error:', error);
         res.status(500).json({
@@ -326,14 +326,14 @@ app.get('/wit/status', async (req, res) => {
     try {
         const status = witService.getStatus();
         const testResult = await witService.testConnection();
-        
+
         res.json({
             success: true,
             status: status,
             testResult: testResult,
             timestamp: new Date().toISOString()
         });
-        
+
     } catch (error) {
         console.error('Wit.ai status error:', error);
         res.status(500).json({
@@ -370,7 +370,7 @@ app.get('/analytics/webhooks', async (req, res) => {
             message: 'Please configure MONGODB_URI in .env file'
         });
     }
-    
+
     try {
         const stats = await webhookService.getWebhookStats();
         res.json({
@@ -394,7 +394,7 @@ app.get('/analytics/recent-calls', async (req, res) => {
             message: 'Please configure MONGODB_URI in .env file'
         });
     }
-    
+
     try {
         const limit = parseInt(req.query.limit) || 50;
         const recentCalls = await webhookService.getRecentCalls(limit);
@@ -437,7 +437,7 @@ if (!process.env.VERCEL) {
         console.log(`📋 Webhook URL: http://localhost:${PORT}/webhook`);
         console.log(`💚 Health check: http://localhost:${PORT}/health`);
     });
-    
+
     server.on('error', (error) => {
         console.error('Server error:', error);
     });
