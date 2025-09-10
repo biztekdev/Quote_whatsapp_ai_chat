@@ -90,21 +90,17 @@ app.use(express.static('public'));
 
 
 // WhatsApp webhook verification
-app.get('/webhook', (req, res) => {
-    // const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
-    
-    // const mode = req.query['hub.mode'];
-    // const token = req.query['hub.verify_token'];
-    // const challenge = req.query['hub.challenge'];
-    
-    // if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-        console.log('Webhook verified successfully!');
-        res.status(200).send('Webhook verified successfully!');
-    // } else {
-    //     res.status(403).send('Forbidden');
-    // }
-});
-
+app.get("/webhook", (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+  
+    if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
+      return res.status(200).send(challenge);
+    }
+    return res.sendStatus(403);
+  });
+  
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
