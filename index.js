@@ -5,6 +5,10 @@ import dotenv from 'dotenv';
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
+import webhookService from './services/webhookService.js';
+import database, { connectDB } from './config/database.js';
+import testRoutes from './api/testRoutes.js';
+import dashboardRoutes from './api/dashboardRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -55,6 +59,15 @@ app.get('/', (req, res) => {
         database: dbConnected ? 'connected' : 'disconnected'
     });
 });
+
+// Test API routes for the relational database
+app.use('/api/test', testRoutes);
+
+// Dashboard API routes
+app.use('/api/dashboard', dashboardRoutes);
+
+// Serve static files from public directory
+app.use(express.static('public'));
 
 //     const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
     

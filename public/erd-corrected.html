@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quote AI System - Corrected ERD</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <style>
+        .erd-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 0;
+        }
+        .card {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            border: none;
+            border-radius: 15px;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px 15px 0 0 !important;
+            padding: 20px;
+        }
+        .issue-card {
+            margin-bottom: 20px;
+            border-left: 5px solid #dc3545;
+        }
+        .fix-card {
+            margin-bottom: 20px;
+            border-left: 5px solid #28a745;
+        }
+        .mermaid {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .code-block {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid #007bff;
+            margin: 10px 0;
+        }
+        .relationship-table {
+            font-size: 0.9em;
+        }
+        .alert-custom {
+            border-radius: 10px;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="erd-container">
+        <div class="container">
+            <div class="row">
+                <div class="col-12">
+                    <div class="text-center text-white mb-5">
+                        <h1><i class="fas fa-database"></i> Quote AI System</h1>
+                        <h2>Corrected Entity Relationship Diagram</h2>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Database Key Types Explanation -->
+            <div class="row mb-5">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-key"></i> Database Key Types Explained</h3>
+                            <small>Understanding PK, UK, and FK in the ERD</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="card border-primary mb-3">
+                                        <div class="card-header bg-primary text-white">
+                                            <h5><i class="fas fa-key"></i> PK - Primary Key</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <p><strong>Definition:</strong> A unique identifier for each record in a table.</p>
+                                            <p><strong>Purpose:</strong></p>
+                                            <ul>
+                                                <li>Uniquely identifies each row</li>
+                                                <li>Cannot be NULL</li>
+                                                <li>Cannot be duplicated</li>
+                                                <li>Used to create relationships</li>
+                                            </ul>
+                                            <div class="code-block">
+                                                <strong>Example:</strong><br>
+                                                <code>ObjectId _id PK</code><br>
+                                                <small>In MongoDB, _id is automatically created as ObjectId</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="card border-warning mb-3">
+                                        <div class="card-header bg-warning text-dark">
+                                            <h5><i class="fas fa-star"></i> UK - Unique Key</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <p><strong>Definition:</strong> A field that must be unique across all records but is not the primary key.</p>
+                                            <p><strong>Purpose:</strong></p>
+                                            <ul>
+                                                <li>Ensures uniqueness of data</li>
+                                                <li>Can be NULL (unlike PK)</li>
+                                                <li>Can have multiple UK per table</li>
+                                                <li>Often used for business logic</li>
+                                            </ul>
+                                            <div class="code-block">
+                                                <strong>Examples:</strong><br>
+                                                <code>string phone UK</code><br>
+                                                <code>string email UK</code><br>
+                                                <small>Phone numbers and emails must be unique</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="card border-success mb-3">
+                                        <div class="card-header bg-success text-white">
+                                            <h5><i class="fas fa-link"></i> FK - Foreign Key</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <p><strong>Definition:</strong> A field that references the primary key of another table.</p>
+                                            <p><strong>Purpose:</strong></p>
+                                            <ul>
+                                                <li>Creates relationships between tables</li>
+                                                <li>Maintains referential integrity</li>
+                                                <li>Links parent and child records</li>
+                                                <li>Enables JOIN operations</li>
+                                            </ul>
+                                            <div class="code-block">
+                                                <strong>Example:</strong><br>
+                                                <code>ObjectId categoryId FK</code><br>
+                                                <small>References _id in PRODUCT_CATEGORIES table</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Real Examples from Our Schema -->
+                            <div class="row mt-4">
+                                <div class="col-12">
+                                    <h5><i class="fas fa-database"></i> Examples from Our Quote AI Schema:</h5>
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead class="table-dark">
+                                                <tr>
+                                                    <th>Table</th>
+                                                    <th>Field</th>
+                                                    <th>Key Type</th>
+                                                    <th>Purpose</th>
+                                                    <th>Example Value</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr class="table-primary">
+                                                    <td>USERS</td>
+                                                    <td>_id</td>
+                                                    <td><span class="badge bg-primary">PK</span></td>
+                                                    <td>Unique identifier for each user</td>
+                                                    <td><code>ObjectId("507f1f77bcf86cd799439011")</code></td>
+                                                </tr>
+                                                <tr class="table-warning">
+                                                    <td>USERS</td>
+                                                    <td>phone</td>
+                                                    <td><span class="badge bg-warning text-dark">UK</span></td>
+                                                    <td>Unique phone number for WhatsApp</td>
+                                                    <td><code>"+1234567890"</code></td>
+                                                </tr>
+                                                <tr class="table-success">
+                                                    <td>PRODUCTS</td>
+                                                    <td>categoryId</td>
+                                                    <td><span class="badge bg-success">FK</span></td>
+                                                    <td>Links to PRODUCT_CATEGORIES._id</td>
+                                                    <td><code>ObjectId("507f1f77bcf86cd799439012")</code></td>
+                                                </tr>
+                                                <tr class="table-success">
+                                                    <td>QUOTES</td>
+                                                    <td>userId</td>
+                                                    <td><span class="badge bg-success">FK</span></td>
+                                                    <td>Links to USERS._id</td>
+                                                    <td><code>ObjectId("507f1f77bcf86cd799439011")</code></td>
+                                                </tr>
+                                                <tr class="table-warning">
+                                                    <td>QUOTES</td>
+                                                    <td>quoteNumber</td>
+                                                    <td><span class="badge bg-warning text-dark">UK</span></td>
+                                                    <td>Unique quote identifier for customers</td>
+                                                    <td><code>"QT1725456789123"</code></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Relationship Flow -->
+                            <div class="row mt-4">
+                                <div class="col-12">
+                                    <h5><i class="fas fa-project-diagram"></i> How Keys Create Relationships:</h5>
+                                    <div class="code-block">
+                                        <strong>Example Relationship Flow:</strong><br><br>
+                                        <code>
+                                            USERS._id (PK) ←→ QUOTES.userId (FK)<br>
+                                            ↳ One user can have many quotes<br><br>
+                                            
+                                            PRODUCT_CATEGORIES._id (PK) ←→ PRODUCTS.categoryId (FK)<br>
+                                            ↳ One category can contain many products<br><br>
+                                            
+                                            PRODUCTS._id (PK) ←→ QUOTES.productId (FK)<br>
+                                            ↳ One product can be quoted many times
+                                        </code>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ERD Diagram -->
+            <div class="row mb-5">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-project-diagram"></i> Complete Database ERD</h3>
+                            <small>Interactive Entity Relationship Diagram</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="mermaid">
+                                erDiagram
+                                    USERS {
+                                        ObjectId _id PK
+                                        string name
+                                        string phone UK
+                                        string email
+                                        boolean isActive
+                                        date lastInteraction
+                                        number totalQuotes
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    PRODUCT_CATEGORIES {
+                                        ObjectId _id PK
+                                        string name UK
+                                        string description
+                                        boolean isActive
+                                        number sortOrder
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    PRODUCTS {
+                                        ObjectId _id PK
+                                        string name
+                                        ObjectId categoryId FK
+                                        string description
+                                        number basePrice
+                                        array dimensionFields
+                                        boolean isActive
+                                        number sortOrder
+                                        string imageUrl
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    MATERIALS {
+                                        ObjectId _id PK
+                                        string name
+                                        ObjectId categoryId FK
+                                        string description
+                                        number pricePerUnit
+                                        string unit
+                                        string thickness
+                                        array specifications
+                                        boolean isActive
+                                        number sortOrder
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    FINISH_CATEGORIES {
+                                        ObjectId _id PK
+                                        string name UK
+                                        string description
+                                        boolean isActive
+                                        number sortOrder
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    PRODUCT_FINISHES {
+                                        ObjectId _id PK
+                                        string name
+                                        ObjectId categoryId FK
+                                        ObjectId productCategoryId FK
+                                        string description
+                                        string priceType
+                                        number price
+                                        string unit
+                                        array specifications
+                                        string processingTime
+                                        boolean isActive
+                                        number sortOrder
+                                        string imageUrl
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    QUOTES {
+                                        ObjectId _id PK
+                                        string quoteNumber UK
+                                        ObjectId userId FK
+                                        ObjectId productId FK
+                                        ObjectId materialId FK
+                                        ObjectId finishId FK
+                                        array dimensions
+                                        number quantity
+                                        object pricing
+                                        string status
+                                        date validUntil
+                                        string notes
+                                        string customerNotes
+                                        date sentAt
+                                        date viewedAt
+                                        date respondedAt
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    CONVERSATION_STATES {
+                                        ObjectId _id PK
+                                        ObjectId userId FK
+                                        string phone
+                                        string currentStep
+                                        object conversationData
+                                        date lastMessageAt
+                                        boolean isActive
+                                        date completedAt
+                                        date createdAt
+                                        date updatedAt
+                                    }
+                                    
+                                    WEBHOOK_CALLS {
+                                        ObjectId _id PK
+                                        string webhookId UK
+                                        string method
+                                        string endpoint
+                                        object headers
+                                        object body
+                                        object whatsappData
+                                        string processingStatus
+                                        number processingTime
+                                        array errorLogs
+                                        string clientIP
+                                        date receivedAt
+                                        date processedAt
+                                    }
+                                    
+                                    USER_STATS {
+                                        ObjectId _id PK
+                                        string phone UK
+                                        string name
+                                        number totalMessages
+                                        object messagesByType
+                                        object intentStats
+                                        date firstMessageAt
+                                        date lastMessageAt
+                                        boolean isActive
+                                        array tags
+                                    }
+
+                                    %% Core User Relationships
+                                    USERS ||--o{ QUOTES : "generates"
+                                    USERS ||--o{ CONVERSATION_STATES : "has_conversations"
+                                    USERS ||--|| USER_STATS : "tracked_by"
+                                    
+                                    %% Product Hierarchy
+                                    PRODUCT_CATEGORIES ||--o{ PRODUCTS : "contains"
+                                    PRODUCT_CATEGORIES ||--o{ MATERIALS : "available_for"
+                                    PRODUCT_CATEGORIES ||--o{ PRODUCT_FINISHES : "applies_to"
+                                    
+                                    %% Finish Categorization
+                                    FINISH_CATEGORIES ||--o{ PRODUCT_FINISHES : "categorizes"
+                                    
+                                    %% Quote Formation
+                                    PRODUCTS ||--o{ QUOTES : "quoted_in"
+                                    MATERIALS ||--o{ QUOTES : "used_in"
+                                    PRODUCT_FINISHES ||--o{ QUOTES : "applied_to"
+                                    
+                                    %% Analytics & Tracking
+                                    USERS ||--o{ WEBHOOK_CALLS : "triggers"
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            themeVariables: {
+                primaryColor: '#667eea',
+                primaryTextColor: '#ffffff',
+                primaryBorderColor: '#764ba2',
+                lineColor: '#667eea'
+            }
+        });
+    </script>
+</body>
+</html>

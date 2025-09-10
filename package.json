@@ -9,6 +9,8 @@
     "dev": "nodemon",
     "dev:debug": "nodemon --inspect",
     "test": "node test.js",
+    "seed": "node seedDatabase.js",
+    "seed:clear": "node -e \"import('./services/databaseSeeder.js').then(({DatabaseSeeder})=>{import('./config/database.js').then(db=>{db.default.connect().then(()=>{DatabaseSeeder.clearAllData().then(()=>{console.log('✅ Data cleared');process.exit(0);})})})})\"",
     "lint": "echo 'No linter configured'",
     "clean": "rm -rf node_modules package-lock.json && npm install"
   },
@@ -32,6 +34,6 @@
     "node-wit": "^6.6.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.1.10"
   }
 }

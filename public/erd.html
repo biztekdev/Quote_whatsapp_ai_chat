@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quote AI System - Database ERD</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin: 20px auto;
+            padding: 30px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+        }
+        .header h1 {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: bold;
+        }
+        .mermaid {
+            text-align: center;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 2px solid #e9ecef;
+        }
+        .entity-details {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            border-left: 5px solid #667eea;
+        }
+        .relationship-section {
+            background: #e8f4fd;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            border-left: 5px solid #2196F3;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+        }
+        .badge-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            margin: 2px;
+        }
+        .table-erd {
+            font-size: 14px;
+        }
+        .table-erd th {
+            background: #667eea;
+            color: white;
+            border: none;
+        }
+        .navbar {
+            background: rgba(255,255,255,0.95) !important;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+        }
+        .nav-link {
+            color: #667eea !important;
+            font-weight: 500;
+        }
+        .nav-link:hover {
+            color: #764ba2 !important;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="#" style="color: #667eea;">
+                <i class="fas fa-database"></i> Quote AI ERD
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="#overview">Overview</a>
+                <a class="nav-link" href="#visual-erd">Visual ERD</a>
+                <a class="nav-link" href="#entities">Entities</a>
+                <a class="nav-link" href="#relationships">Relationships</a>
+                <a class="nav-link" href="#business-logic">Business Logic</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Header -->
+        <div id="overview" class="header">
+            <h1><i class="fas fa-sitemap"></i> Database Entity Relationship Diagram</h1>
+            <h3>Quote AI WhatsApp System</h3>
+            <p class="lead">Complete database schema with 8 main collections and comprehensive relationships</p>
+            <div>
+                <span class="badge-custom">8 Collections</span>
+                <span class="badge-custom">15+ Relationships</span>
+                <span class="badge-custom">MongoDB + Mongoose</span>
+                <span class="badge-custom">Full CRUD Support</span>
+            </div>
+        </div>
+
+        <!-- Visual ERD -->
+        <div id="visual-erd" class="section">
+            <h2><i class="fas fa-project-diagram"></i> Visual Entity Relationship Diagram</h2>
+            <div class="mermaid">
+                erDiagram
+                    USERS {
+                        ObjectId _id PK
+                        string name
+                        string phone UK
+                        string email
+                        boolean isActive
+                        date lastInteraction
+                        number totalQuotes
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    PRODUCT_CATEGORIES {
+                        ObjectId _id PK
+                        string name UK
+                        string description
+                        boolean isActive
+                        number sortOrder
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    PRODUCTS {
+                        ObjectId _id PK
+                        string name
+                        ObjectId categoryId FK
+                        string description
+                        number basePrice
+                        array dimensionFields
+                        boolean isActive
+                        number sortOrder
+                        string imageUrl
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    MATERIALS {
+                        ObjectId _id PK
+                        string name
+                        ObjectId categoryId FK
+                        string description
+                        number pricePerUnit
+                        string unit
+                        string thickness
+                        array specifications
+                        boolean isActive
+                        number sortOrder
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    FINISH_CATEGORIES {
+                        ObjectId _id PK
+                        string name UK
+                        string description
+                        boolean isActive
+                        number sortOrder
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    PRODUCT_FINISHES {
+                        ObjectId _id PK
+                        string name
+                        ObjectId categoryId FK
+                        ObjectId productCategoryId FK
+                        string description
+                        string priceType
+                        number price
+                        string unit
+                        array specifications
+                        string processingTime
+                        boolean isActive
+                        number sortOrder
+                        string imageUrl
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    QUOTES {
+                        ObjectId _id PK
+                        string quoteNumber UK
+                        ObjectId userId FK
+                        ObjectId productId FK
+                        ObjectId materialId FK
+                        ObjectId finishId FK
+                        array dimensions
+                        number quantity
+                        object pricing
+                        string status
+                        date validUntil
+                        string notes
+                        string customerNotes
+                        date sentAt
+                        date viewedAt
+                        date respondedAt
+                        date createdAt
+                        date updatedAt
+                    }
+                    
+                    CONVERSATION_STATES {
+                        ObjectId _id PK
+                        ObjectId userId FK
+                        string phone
+                        string currentStep
+                        object conversationData
+                        date lastMessageAt
+                        boolean isActive
+                        date completedAt
+                        date createdAt
+                        date updatedAt
+                    }
+
+                    USERS ||--o{ QUOTES : "has many"
+                    USERS ||--|| CONVERSATION_STATES : "has one active"
+                    
+                    PRODUCT_CATEGORIES ||--o{ PRODUCTS : "contains"
+                    PRODUCT_CATEGORIES ||--o{ MATERIALS : "has materials"
+                    PRODUCT_CATEGORIES ||--o{ PRODUCT_FINISHES : "supports finishes"
+                    
+                    FINISH_CATEGORIES ||--o{ PRODUCT_FINISHES : "categorizes"
+                    
+                    PRODUCTS ||--o{ QUOTES : "quoted in"
+                    MATERIALS ||--o{ QUOTES : "used in"
+                    PRODUCT_FINISHES ||--o{ QUOTES : "applied to"
+                    
+                    PRODUCT_CATEGORIES ||--o{ CONVERSATION_STATES : "selected in"
+                    PRODUCTS ||--o{ CONVERSATION_STATES : "selected in"
+                    MATERIALS ||--o{ CONVERSATION_STATES : "selected in"
+                    PRODUCT_FINISHES ||--o{ CONVERSATION_STATES : "selected in"
+            </div>
+        </div>
+
+        <!-- Entity Details -->
+        <div id="entities" class="section">
+            <h2><i class="fas fa-table"></i> Entity Details</h2>
+            
+            <div class="entity-details">
+                <h4><i class="fas fa-users"></i> USERS Collection</h4>
+                <p><strong>Purpose:</strong> Store customer information for WhatsApp interactions</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>_id</td><td>ObjectId</td><td>Primary Key</td><td>Unique identifier</td></tr>
+                        <tr><td>name</td><td>String</td><td>Required</td><td>Customer name</td></tr>
+                        <tr><td>phone</td><td>String</td><td>Required, Unique, Indexed</td><td>WhatsApp phone number</td></tr>
+                        <tr><td>email</td><td>String</td><td>Optional, Validated</td><td>Email address</td></tr>
+                        <tr><td>isActive</td><td>Boolean</td><td>Default: true</td><td>Account status</td></tr>
+                        <tr><td>totalQuotes</td><td>Number</td><td>Default: 0</td><td>Quote counter</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="entity-details">
+                <h4><i class="fas fa-folder"></i> PRODUCT_CATEGORIES Collection</h4>
+                <p><strong>Purpose:</strong> High-level product categorization</p>
+                <p><strong>Examples:</strong> Mylar Bags, Stand Up Pouches, Flat Pouches, Gusseted Bags</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>_id</td><td>ObjectId</td><td>Primary Key</td><td>Unique identifier</td></tr>
+                        <tr><td>name</td><td>String</td><td>Required, Unique</td><td>Category name</td></tr>
+                        <tr><td>description</td><td>String</td><td>Optional</td><td>Category description</td></tr>
+                        <tr><td>sortOrder</td><td>Number</td><td>Default: 0</td><td>Display order</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="entity-details">
+                <h4><i class="fas fa-box"></i> PRODUCTS Collection</h4>
+                <p><strong>Purpose:</strong> Specific product definitions within categories</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>categoryId</td><td>ObjectId</td><td>Required, FK</td><td>Reference to product category</td></tr>
+                        <tr><td>basePrice</td><td>Number</td><td>Required, Min: 0</td><td>Base product price</td></tr>
+                        <tr><td>dimensionFields</td><td>Array</td><td>Configurable</td><td>Product-specific dimensions</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="entity-details">
+                <h4><i class="fas fa-layer-group"></i> MATERIALS Collection</h4>
+                <p><strong>Purpose:</strong> Available materials per product category</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>categoryId</td><td>ObjectId</td><td>Required, FK</td><td>Reference to product category</td></tr>
+                        <tr><td>pricePerUnit</td><td>Number</td><td>Required, Min: 0</td><td>Material cost per unit</td></tr>
+                        <tr><td>unit</td><td>String</td><td>Enum</td><td>Pricing unit (sq ft, piece, etc.)</td></tr>
+                        <tr><td>thickness</td><td>String</td><td>Optional</td><td>Material thickness (e.g., "3.5 mil")</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="entity-details">
+                <h4><i class="fas fa-paint-brush"></i> PRODUCT_FINISHES Collection</h4>
+                <p><strong>Purpose:</strong> Specific finishes available for product categories</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>categoryId</td><td>ObjectId</td><td>Required, FK</td><td>Reference to finish category</td></tr>
+                        <tr><td>productCategoryId</td><td>ObjectId</td><td>Required, FK</td><td>Reference to product category</td></tr>
+                        <tr><td>priceType</td><td>String</td><td>Enum</td><td>fixed, percentage, per_unit</td></tr>
+                        <tr><td>processingTime</td><td>String</td><td>Default: "Standard"</td><td>Processing duration</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="entity-details">
+                <h4><i class="fas fa-file-invoice-dollar"></i> QUOTES Collection</h4>
+                <p><strong>Purpose:</strong> Store complete quote information with full traceability</p>
+                <table class="table table-erd table-striped">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Constraints</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>quoteNumber</td><td>String</td><td>Required, Unique</td><td>Auto-generated quote ID</td></tr>
+                        <tr><td>userId</td><td>ObjectId</td><td>Required, FK</td><td>Reference to customer</td></tr>
+                        <tr><td>productId</td><td>ObjectId</td><td>Required, FK</td><td>Selected product</td></tr>
+                        <tr><td>materialId</td><td>ObjectId</td><td>Required, FK</td><td>Selected material</td></tr>
+                        <tr><td>finishId</td><td>ObjectId</td><td>Required, FK</td><td>Selected finish</td></tr>
+                        <tr><td>pricing</td><td>Object</td><td>Embedded</td><td>Complete pricing breakdown</td></tr>
+                        <tr><td>status</td><td>String</td><td>Enum</td><td>Quote lifecycle status</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Relationships -->
+        <div id="relationships" class="relationship-section">
+            <h2><i class="fas fa-sitemap"></i> Relationship Summary</h2>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <h4>One-to-Many Relationships</h4>
+                    <ul class="list-group">
+                        <li class="list-group-item">👤 USERS → QUOTES</li>
+                        <li class="list-group-item">📁 PRODUCT_CATEGORIES → PRODUCTS</li>
+                        <li class="list-group-item">📁 PRODUCT_CATEGORIES → MATERIALS</li>
+                        <li class="list-group-item">📁 PRODUCT_CATEGORIES → PRODUCT_FINISHES</li>
+                        <li class="list-group-item">🎨 FINISH_CATEGORIES → PRODUCT_FINISHES</li>
+                        <li class="list-group-item">📦 PRODUCTS → QUOTES</li>
+                        <li class="list-group-item">🧱 MATERIALS → QUOTES</li>
+                        <li class="list-group-item">✨ PRODUCT_FINISHES → QUOTES</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h4>One-to-One Relationships</h4>
+                    <ul class="list-group">
+                        <li class="list-group-item">👤 USERS → CONVERSATION_STATES (active)</li>
+                    </ul>
+                    
+                    <h4 class="mt-3">Reference Relationships</h4>
+                    <ul class="list-group">
+                        <li class="list-group-item">💬 CONVERSATION_STATES references all product entities</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Business Logic -->
+        <div id="business-logic" class="entity-details">
+            <h2><i class="fas fa-cogs"></i> Business Logic & Constraints</h2>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <h4>Key Business Rules</h4>
+                    <ul>
+                        <li><strong>Material Availability:</strong> Materials are specific to product categories</li>
+                        <li><strong>Finish Compatibility:</strong> Finishes are compatible with specific product categories</li>
+                        <li><strong>Conversation Uniqueness:</strong> One active conversation per user</li>
+                        <li><strong>Quote Integrity:</strong> All quotes maintain referential integrity</li>
+                        <li><strong>User Identification:</strong> Phone numbers are unique WhatsApp identifiers</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h4>Performance Features</h4>
+                    <ul>
+                        <li><strong>Strategic Indexing:</strong> Compound indexes for optimal queries</li>
+                        <li><strong>Efficient Filtering:</strong> Category-based material and finish filtering</li>
+                        <li><strong>Conversation Tracking:</strong> Real-time state management</li>
+                        <li><strong>Quote Lifecycle:</strong> Status-based workflow management</li>
+                        <li><strong>Scalable Design:</strong> Supports horizontal scaling</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Flow -->
+        <div class="entity-details">
+            <h2><i class="fas fa-flow-chart"></i> Quote Generation Data Flow</h2>
+            <div class="code-block">
+1. User Registration → USERS collection
+2. Conversation Start → CONVERSATION_STATES (active = true)
+3. Category Selection → Reference to PRODUCT_CATEGORIES
+4. Product Selection → Reference to PRODUCTS
+5. Material Selection → Reference to MATERIALS (filtered by category)
+6. Finish Selection → Reference to PRODUCT_FINISHES (filtered by product category)
+7. Quote Generation → QUOTES collection (with all references)
+8. Conversation Complete → CONVERSATION_STATES (active = false)
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-5 pt-4 border-top">
+            <p class="text-muted">
+                <i class="fas fa-database"></i> MongoDB Database Schema for Quote AI WhatsApp System
+                <br>
+                <small>Complete ERD with 8 collections, 15+ relationships, and full CRUD operations</small>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+
+        // Smooth scrolling for navigation
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+</body>
+</html>
