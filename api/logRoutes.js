@@ -1,5 +1,5 @@
 import express from 'express';
-import customLogger from '../services/customLogger.js';
+import smartLogger from '../services/smartLogger.js';
 
 const router = express.Router();
 
@@ -8,37 +8,28 @@ router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 50, level, search, raw } = req.query;
         
-        // If raw=true, return the raw log file content
+        // If raw=true, return the raw log content
         if (raw === 'true') {
-            const fs = await import('fs');
-            const path = await import('path');
+            const logContent = await smartLogger.getRawLogs();
             
-            const logPath = path.join('temp', 'log.txt');
-            
-            if (!fs.existsSync(logPath)) {
-                return res.status(404).send('Log file not found');
+            if (!logContent) {
+                return res.status(404).send('No logs available');
             }
-            
-            let logContent = fs.readFileSync(logPath, 'utf8');
-            
-            // Reverse the log content to show newest first (descending order)
-            const logLines = logContent.split('\n').filter(line => line.trim());
-            const reversedLogContent = logLines.reverse().join('\n');
             
             // Set content type to plain text for browser display
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Cache-Control', 'no-cache');
             
-            return res.send(reversedLogContent);
+            return res.send(logContent);
         }
         
         let logs;
         if (level) {
-            logs = customLogger.filterLogsByLevel(level);
+            logs = smartLogger.filterLogsByLevel(level);
         } else if (search) {
-            logs = customLogger.searchLogs(search);
+            logs = smartLogger.searchLogs(search);
         } else {
-            const result = customLogger.readLogsPaginated(parseInt(page), parseInt(limit));
+            const result = smartLogger.getLogsPaginated(parseInt(page), parseInt(limit));
             return res.json({
                 success: true,
                 data: result.logs,
@@ -54,7 +45,7 @@ router.get('/', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error reading logs', { error: error.message });
+        smartLogger.error('Error reading logs', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to read logs',
@@ -66,14 +57,16 @@ router.get('/', async (req, res) => {
 // Get log statistics
 router.get('/stats', (req, res) => {
     try {
-        const stats = customLogger.getLogStats();
+        const stats = smartLogger.getLogStats();
+        const envInfo = smartLogger.getEnvironmentInfo();
         res.json({
             success: true,
             data: stats,
+            environment: envInfo,
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error getting log stats', { error: error.message });
+        smartLogger.error('Error getting log stats', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to get log statistics',
@@ -86,7 +79,7 @@ router.get('/stats', (req, res) => {
 router.get('/level/:level', (req, res) => {
     try {
         const { level } = req.params;
-        const logs = customLogger.filterLogsByLevel(level);
+        const logs = smartLogger.filterLogsByLevel(level);
         
         res.json({
             success: true,
@@ -96,7 +89,7 @@ router.get('/level/:level', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error filtering logs by level', { error: error.message });
+        smartLogger.error('Error filtering logs by level', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to filter logs by level',
@@ -117,7 +110,7 @@ router.get('/search', (req, res) => {
             });
         }
         
-        const logs = customLogger.searchLogs(searchTerm);
+        const logs = smartLogger.searchLogs(searchTerm);
         
         res.json({
             success: true,
@@ -127,7 +120,7 @@ router.get('/search', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error searching logs', { error: error.message });
+        smartLogger.error('Error searching logs', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to search logs',
@@ -148,7 +141,7 @@ router.post('/test', (req, res) => {
             });
         }
         
-        customLogger[level](message, meta);
+        smartLogger[level](message, meta);
         
         res.json({
             success: true,
@@ -157,7 +150,7 @@ router.post('/test', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error creating test log', { error: error.message });
+        smartLogger.error('Error creating test log', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to create log entry',
@@ -169,9 +162,9 @@ router.post('/test', (req, res) => {
 // Clear all logs
 router.delete('/', (req, res) => {
     try {
-        const success = customLogger.clearLogs();
+        const success = smartLogger.clearLogs();
         if (success) {
-            customLogger.info('Logs cleared via API');
+            smartLogger.info('Logs cleared via API');
             res.json({
                 success: true,
                 message: 'All logs cleared successfully',
@@ -184,7 +177,7 @@ router.delete('/', (req, res) => {
             });
         }
     } catch (error) {
-        customLogger.error('Error clearing logs', { error: error.message });
+        smartLogger.error('Error clearing logs', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to clear logs',
@@ -197,7 +190,7 @@ router.delete('/', (req, res) => {
 router.get('/recent', (req, res) => {
     try {
         const { limit = 10 } = req.query;
-        const result = customLogger.readLogsPaginated(1, parseInt(limit));
+        const result = smartLogger.readLogsPaginated(1, parseInt(limit));
         
         res.json({
             success: true,
@@ -206,7 +199,7 @@ router.get('/recent', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        customLogger.error('Error getting recent logs', { error: error.message });
+        smartLogger.error('Error getting recent logs', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to get recent logs',
@@ -218,29 +211,22 @@ router.get('/recent', (req, res) => {
 // View raw log file in browser
 router.get('/raw', async (req, res) => {
     try {
-        const fs = await import('fs');
-        const path = await import('path');
+        const logContent = await smartLogger.getRawLogs();
+        const envInfo = smartLogger.getEnvironmentInfo();
         
-        const logPath = path.join('temp', 'log.txt');
-        
-        if (!fs.existsSync(logPath)) {
+        if (!logContent) {
             return res.status(404).send(`
                 <html>
-                    <head><title>Log File Not Found</title></head>
+                    <head><title>No Logs Available</title></head>
                     <body>
-                        <h1>Log File Not Found</h1>
-                        <p>The log file does not exist yet. Create some logs first!</p>
+                        <h1>No Logs Available</h1>
+                        <p>No logs have been created yet. Create some logs first!</p>
                         <p><a href="/api/logs/test">Create Test Log</a></p>
+                        <p><strong>Environment:</strong> ${envInfo.loggerType} (${envInfo.isVercel ? 'Vercel' : 'Local'})</p>
                     </body>
                 </html>
             `);
         }
-        
-        let logContent = fs.readFileSync(logPath, 'utf8');
-        
-        // Reverse the log content to show newest first (descending order)
-        const logLines = logContent.split('\n').filter(line => line.trim());
-        const reversedLogContent = logLines.reverse().join('\n');
         
         // Set content type to HTML for better browser display
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -313,14 +299,14 @@ router.get('/raw', async (req, res) => {
                         <button onclick="clearLogs()" class="btn btn-danger">🗑️ Clear Logs</button>
                     </div>
                     <div class="stats">
-                        File: temp/log.txt | 
+                        Environment: ${envInfo.loggerType} (${envInfo.isVercel ? 'Vercel' : 'Local'}) | 
                         Size: ${(logContent.length / 1024).toFixed(2)} KB | 
                         Lines: ${logContent.split('\n').length} | 
                         Order: Newest First ⬇️ | 
                         Last Updated: ${new Date().toLocaleString()}
                     </div>
                 </div>
-                <div class="log-content">${reversedLogContent || 'No logs available yet.'}</div>
+                <div class="log-content">${logContent || 'No logs available yet.'}</div>
                 <script>
                     // Auto-refresh every 5 seconds
                     setTimeout(() => {
@@ -358,7 +344,7 @@ router.get('/raw', async (req, res) => {
         
         res.send(htmlContent);
     } catch (error) {
-        customLogger.error('Error viewing raw logs', { error: error.message });
+        smartLogger.error('Error viewing raw logs', { error: error.message });
         res.status(500).send(`
             <html>
                 <head><title>Error</title></head>
@@ -374,7 +360,7 @@ router.get('/raw', async (req, res) => {
 // Export logs as text file
 router.get('/export', (req, res) => {
     try {
-        const logs = customLogger.readLogs();
+        const logs = smartLogger.readLogs();
         const logText = logs.map(log => 
             `${log.timestamp} : [${log.level}] ${log.message}`
         ).join('\n');
@@ -383,7 +369,7 @@ router.get('/export', (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename=logs.txt');
         res.send(logText);
     } catch (error) {
-        customLogger.error('Error exporting logs', { error: error.message });
+        smartLogger.error('Error exporting logs', { error: error.message });
         res.status(500).json({
             success: false,
             error: 'Failed to export logs',

@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
-import customLogger from './services/customLogger.js';
+import smartLogger from './services/smartLogger.js';
 import webhookService from './services/webhookService.js';
 import database, { connectDB } from './config/database.js';
 import testRoutes from './api/testRoutes.js';
@@ -109,7 +109,7 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
-    customLogger.info('Calling webhook');
+    smartLogger.info('Calling webhook');
 
     
     try {
