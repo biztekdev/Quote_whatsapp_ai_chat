@@ -5,10 +5,12 @@ import dotenv from 'dotenv';
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
+import customLogger from './services/customLogger.js';
 import webhookService from './services/webhookService.js';
 import database, { connectDB } from './config/database.js';
 import testRoutes from './api/testRoutes.js';
 import dashboardRoutes from './api/dashboardRoutes.js';
+import logRoutes from './api/logRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -66,6 +68,9 @@ app.use('/api/test', testRoutes);
 // Dashboard API routes
 app.use('/api/dashboard', dashboardRoutes);
 
+// Log API routes
+app.use('/api/logs', logRoutes);
+
 // Serve static files from public directory
 app.use(express.static('public'));
 
@@ -104,6 +109,8 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
+    customLogger.info('Calling webhook');
+
     
     try {
         const body = req.body;
