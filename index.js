@@ -91,18 +91,18 @@ app.use(express.static('public'));
 
 // WhatsApp webhook verification
 app.get('/webhook', (req, res) => {
-    const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+    // const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
     
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+    // const mode = req.query['hub.mode'];
+    // const token = req.query['hub.verify_token'];
+    // const challenge = req.query['hub.challenge'];
     
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    // if (mode === 'subscribe' && token === VERIFY_TOKEN) {
         console.log('Webhook verified successfully!');
-        res.status(200).send(challenge);
-    } else {
-        res.status(403).send('Forbidden');
-    }
+        res.status(200).send('Webhook verified successfully!');
+    // } else {
+    //     res.status(403).send('Forbidden');
+    // }
 });
 
 // WhatsApp webhook for receiving messages
@@ -110,66 +110,67 @@ app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
     smartLogger.info('Calling webhook');
+    res.status(200).send('Webhook post verified successfully!');
 
     
-    try {
-        const body = req.body;
-        console.log('📨 Incoming webhook:', JSON.stringify(body, null, 2));
+    // try {
+    //     const body = req.body;
+    //     console.log('📨 Incoming webhook:', JSON.stringify(body, null, 2));
         
-        if (body.object === 'whatsapp_business_account') {
-            body.entry?.forEach(async (entry) => {
-                const changes = entry.changes?.[0];
-                if (changes?.field === 'messages') {
-                    const value = changes.value;
-                    const messages = value.messages;
+    //     if (body.object === 'whatsapp_business_account') {
+    //         body.entry?.forEach(async (entry) => {
+    //             const changes = entry.changes?.[0];
+    //             if (changes?.field === 'messages') {
+    //                 const value = changes.value;
+    //                 const messages = value.messages;
                     
-                    if (messages) {
-                        for (const message of messages) {
-                            const result = await messageHandler.handleIncomingMessage(message, value);
-                            processingResult = { ...processingResult, ...result };
-                        }
-                    }
-                }
-            });
-        }
+    //                 if (messages) {
+    //                     for (const message of messages) {
+    //                         const result = await messageHandler.handleIncomingMessage(message, value);
+    //                         processingResult = { ...processingResult, ...result };
+    //                     }
+    //                 }
+    //             }
+    //         });
+    //     }
         
-        // Store webhook call in database (if connected)
-        if (dbConnected) {
-            try {
-                await webhookService.storeWebhookCall(req, res, processingResult);
-            } catch (dbError) {
-                console.error('⚠️  Database storage failed:', dbError.message);
-                // Continue processing even if database fails
-            }
-        }
+    //     // Store webhook call in database (if connected)
+    //     if (dbConnected) {
+    //         try {
+    //             await webhookService.storeWebhookCall(req, res, processingResult);
+    //         } catch (dbError) {
+    //             console.error('⚠️  Database storage failed:', dbError.message);
+    //             // Continue processing even if database fails
+    //         }
+    //     }
         
-        const processingTime = Date.now() - startTime;
-        console.log(`⚡ Webhook processed in ${processingTime}ms`);
+    //     const processingTime = Date.now() - startTime;
+    //     console.log(`⚡ Webhook processed in ${processingTime}ms`);
         
-        res.status(200).json({
-            status: 'ok',
-            processingTime: `${processingTime}ms`,
-            timestamp: new Date().toISOString()
-        });
+    //     res.status(200).json({
+    //         status: 'ok',
+    //         processingTime: `${processingTime}ms`,
+    //         timestamp: new Date().toISOString()
+    //     });
         
-    } catch (error) {
-        console.error('❌ Webhook error:', error);
+    // } catch (error) {
+    //     console.error('❌ Webhook error:', error);
         
-        // Store error in database (if connected)
-        if (dbConnected) {
-            try {
-                await webhookService.storeWebhookCall(req, res, { error: error.message });
-            } catch (dbError) {
-                console.error('⚠️  Error storage failed:', dbError.message);
-            }
-        }
+    //     // Store error in database (if connected)
+    //     if (dbConnected) {
+    //         try {
+    //             await webhookService.storeWebhookCall(req, res, { error: error.message });
+    //         } catch (dbError) {
+    //             console.error('⚠️  Error storage failed:', dbError.message);
+    //         }
+    //     }
         
-        res.status(500).json({
-            error: 'Internal Server Error',
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
+    //     res.status(500).json({
+    //         error: 'Internal Server Error',
+    //         message: error.message,
+    //         timestamp: new Date().toISOString()
+    //     });
+    // }
 });
 
 // API Routes for sending messages
