@@ -44,29 +44,33 @@ Indexes:
 ```
 product_categories {
   _id: ObjectId (Primary Key)
-  name: String (required, unique)
+  erp_id: Number (required, unique, indexed)
+  name: String (required)
   description: String
+  sub_names: Array[String] (default: [])
   isActive: Boolean (default: true)
-  sortOrder: Number (default: 0)
+  sortOrder: Number (default: 0, indexed)
   createdAt: Date (auto)
   updatedAt: Date (auto)
 }
 
 Examples:
-- Mylar Bags
-- Stand Up Pouches
-- Flat Pouches
-- Gusseted Bags
+- ERP ID: 1, Mylor Bag (sub_names: ["pouches", "bags"])
+- ERP ID: 2, Folding Carton (sub_names: ["boxes"])
+- ERP ID: 3, Label (sub_names: ["labels"])
+- ERP ID: 4, Rigid Box (sub_names: ["boxes"])
 ```
 
 ### 3. Products Collection
 ```
 products {
   _id: ObjectId (Primary Key)
+  erp_id: Number (required, unique, indexed)
   name: String (required)
   categoryId: ObjectId (required, ref: 'ProductCategory')
+  erp_category_id: Number (required, indexed)
   description: String
-  basePrice: Number (required, min: 0)
+  basePrice: Number (default: 0, min: 0)
   dimensionFields: Array [
     {
       name: String (required)
@@ -84,22 +88,32 @@ products {
 }
 
 Indexes:
+- erp_id (unique)
 - categoryId + isActive
+- erp_category_id
 - name
+
+Examples:
+- ERP ID: 1, Reverse Tuck Box (Category ERP ID: 2, Dimensions: ["L","W","H"])
+- ERP ID: 2, Straight Tuck Box (Category ERP ID: 2, Dimensions: ["L","W","H"])
+- ERP ID: 4, Stand Up Mylar Pouch (Category ERP ID: 1, Dimensions: ["W","H"])
 
 Relationships:
 - products.categoryId → product_categories._id (Many-to-One)
+- products.erp_category_id → product_categories.erp_id (Many-to-One via ERP)
 ```
 
 ### 4. Materials Collection
 ```
 materials {
   _id: ObjectId (Primary Key)
+  erp_id: Number (required, unique, indexed)
   name: String (required)
   categoryId: ObjectId (required, ref: 'ProductCategory')
+  erp_category_id: Number (required, indexed)
   description: String
-  pricePerUnit: Number (required, min: 0)
-  unit: String (default: 'sq ft', enum: ['sq ft', 'sq inch', 'linear ft', 'piece', 'kg', 'gram'])
+  pricePerUnit: Number (default: 0, min: 0)
+  unit: String (default: 'piece', enum: ['sq ft', 'sq inch', 'linear ft', 'piece', 'kg', 'gram'])
   thickness: String (e.g., "3.5 mil", "5 mil")
   specifications: Array [
     {
@@ -114,11 +128,19 @@ materials {
 }
 
 Indexes:
+- erp_id (unique)
 - categoryId + isActive
+- erp_category_id
 - name
+
+Examples:
+- ERP ID: 48, PP Silver Sticker (Category ERP ID: 3)
+- ERP ID: 49, White Paper Sticker (Category ERP ID: 3)
+- ERP ID: 51, Kraft Paper (Category ERP ID: 1)
 
 Relationships:
 - materials.categoryId → product_categories._id (Many-to-One)
+- materials.erp_category_id → product_categories.erp_id (Many-to-One via ERP)
 ```
 
 ### 5. Finish Categories Collection

@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 
 // Material Schema
 const materialSchema = new mongoose.Schema({
+    erp_id: {
+        type: Number,
+        required: true,
+        unique: true,
+        index: true // Index for fast lookups by ERP ID
+    },
     name: {
         type: String,
         required: true,
@@ -13,13 +19,18 @@ const materialSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    erp_category_id: {
+        type: Number,
+        required: true,
+        index: true // ERP category reference
+    },
     description: {
         type: String,
         trim: true
     },
     pricePerUnit: {
         type: Number,
-        required: true,
+        default: 0,
         min: 0
     },
     unit: {

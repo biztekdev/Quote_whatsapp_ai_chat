@@ -2,15 +2,24 @@ import mongoose from 'mongoose';
 
 // Product Categories Schema
 const productCategorySchema = new mongoose.Schema({
+    erp_id: {
+        type: Number,
+        required: true,
+        unique: true,
+        index: true // Index for fast lookups by ERP ID
+    },
     name: {
         type: String,
         required: true,
-        unique: true,
         trim: true
     },
     description: {
         type: String,
         trim: true
+    },
+    sub_names: {
+        type: [String], // Array of strings for sub-category names
+        default: []
     },
     isActive: {
         type: Boolean,
@@ -18,7 +27,8 @@ const productCategorySchema = new mongoose.Schema({
     },
     sortOrder: {
         type: Number,
-        default: 0
+        default: 0,
+        index: true // Add index for better sorting performance
     }
 }, {
     timestamps: true,
@@ -27,6 +37,12 @@ const productCategorySchema = new mongoose.Schema({
 
 // Products Schema
 const productSchema = new mongoose.Schema({
+    erp_id: {
+        type: Number,
+        required: true,
+        unique: true,
+        index: true // Index for fast lookups by ERP ID
+    },
     name: {
         type: String,
         required: true,
@@ -38,13 +54,18 @@ const productSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    erp_category_id: {
+        type: Number,
+        required: true,
+        index: true // ERP category reference
+    },
     description: {
         type: String,
         trim: true
     },
     basePrice: {
         type: Number,
-        required: true,
+        default: 0,
         min: 0
     },
     dimensionFields: [{

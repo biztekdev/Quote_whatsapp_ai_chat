@@ -11,6 +11,7 @@ import database, { connectDB } from './config/database.js';
 import testRoutes from './api/testRoutes.js';
 import dashboardRoutes from './api/dashboardRoutes.js';
 import logRoutes from './api/logRoutes.js';
+import erpSyncRoutes from './api/erpSyncRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -70,6 +71,9 @@ app.use('/api/dashboard', dashboardRoutes);
 
 // Log API routes
 app.use('/api/logs', logRoutes);
+
+// ERP Sync API routes
+app.use('/api/sync', erpSyncRoutes);
 
 // Serve static files from public directory
 app.use(express.static('public'));
