@@ -2609,7 +2609,7 @@ class DashboardApp {
     // ERP Sync Methods
     async syncCategoriesWithERP() {
         try {
-            await this.erpSync('categories', 'Categories');
+            await this.erpSync('product-categories', 'Product Categories');
         } catch (error) {
             console.error('ERP sync error:', error);
         }

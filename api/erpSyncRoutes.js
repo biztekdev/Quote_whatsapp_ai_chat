@@ -1,117 +1,176 @@
 import express from 'express';
+import erpSyncService from '../services/erpSyncService.js';
+
 const router = express.Router();
 
-// ERP Sync Routes
-router.post('/categories', async (req, res) => {
+// Initialize sync service
+erpSyncService.initialize().catch(error => {
+    console.error('Failed to initialize ERP Sync Service:', error.message);
+});
+
+/**
+ * POST /api/sync/product-categories
+ * Sync product categories from ERP
+ */
+router.post('/product-categories', async (req, res) => {
     try {
-        // Simulate ERP sync for categories
-        console.log('Syncing categories with ERP...');
+        console.log('Starting product categories sync via API');
         
-        // Here you would integrate with your actual ERP system
-        // For now, we'll simulate a successful sync
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate API call
+        const result = await erpSyncService.syncProductCategories();
         
         res.json({
             success: true,
-            message: 'Categories synced successfully with ERP',
-            data: {
-                syncedCount: 0,
+            message: 'Product categories sync completed',
+            data: result,
             timestamp: new Date().toISOString()
-            }
         });
     } catch (error) {
-        console.error('ERP sync error for categories:', error);
+        console.error('Product categories sync failed via API:', error.message);
+        
         res.status(500).json({
             success: false,
-            error: 'Failed to sync categories with ERP: ' + error.message
+            error: 'Product categories sync failed',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
 
+/**
+ * POST /api/sync/products
+ * Sync products from ERP
+ */
 router.post('/products', async (req, res) => {
     try {
-        console.log('Syncing products with ERP...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('Starting products sync via API');
+        
+        const result = await erpSyncService.syncProducts();
         
         res.json({
             success: true,
-            message: 'Products synced successfully with ERP',
-            data: {
-                syncedCount: 0,
+            message: 'Products sync completed',
+            data: result,
             timestamp: new Date().toISOString()
-            }
         });
     } catch (error) {
-        console.error('ERP sync error for products:', error);
+        console.error('Products sync failed via API:', error.message);
+        
         res.status(500).json({
             success: false,
-            error: 'Failed to sync products with ERP: ' + error.message
+            error: 'Products sync failed',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
 
+/**
+ * POST /api/sync/materials
+ * Sync materials from ERP
+ */
 router.post('/materials', async (req, res) => {
     try {
-        console.log('Syncing materials with ERP...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('Starting materials sync via API');
+        
+        const result = await erpSyncService.syncMaterials();
         
         res.json({
             success: true,
-            message: 'Materials synced successfully with ERP',
-            data: {
-                syncedCount: 0,
+            message: 'Materials sync completed',
+            data: result,
             timestamp: new Date().toISOString()
-            }
         });
     } catch (error) {
-        console.error('ERP sync error for materials:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to sync materials with ERP: ' + error.message
-        });
-    }
-});
-
-router.post('/finish-categories', async (req, res) => {
-    try {
-        console.log('Syncing finish categories with ERP...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.error('Materials sync failed via API:', error.message);
         
-        res.json({
-            success: true,
-            message: 'Finish categories synced successfully with ERP',
-            data: {
-                syncedCount: 0,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('ERP sync error for finish categories:', error);
         res.status(500).json({
             success: false,
-            error: 'Failed to sync finish categories with ERP: ' + error.message
+            error: 'Materials sync failed',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
 
+/**
+ * POST /api/sync/finishes
+ * Sync finishes from ERP
+ */
 router.post('/finishes', async (req, res) => {
     try {
-        console.log('Syncing finishes with ERP...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('Starting finishes sync via API');
+        
+        const result = await erpSyncService.syncFinishes();
         
         res.json({
             success: true,
-            message: 'Finishes synced successfully with ERP',
-            data: {
-                syncedCount: 0,
+            message: 'Finishes sync completed',
+            data: result,
             timestamp: new Date().toISOString()
-            }
         });
     } catch (error) {
-        console.error('ERP sync error for finishes:', error);
+        console.error('Finishes sync failed via API:', error.message);
+        
         res.status(500).json({
             success: false,
-            error: 'Failed to sync finishes with ERP: ' + error.message
+            error: 'Finishes sync failed',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * POST /api/sync/all
+ * Sync all tables from ERP
+ */
+router.post('/all', async (req, res) => {
+    try {
+        console.log('Starting full ERP sync via API');
+        
+        const result = await erpSyncService.syncAll();
+        
+        res.json({
+            success: true,
+            message: 'Full ERP sync completed',
+            data: result,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Full ERP sync failed via API:', error.message);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Full ERP sync failed',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * GET /api/sync/status
+ * Get sync status and statistics
+ */
+router.get('/status', async (req, res) => {
+    try {
+        console.log('Getting ERP sync status');
+        
+        const status = await erpSyncService.getSyncStatus();
+        
+        res.json({
+            success: true,
+            data: status,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error getting sync status:', error.message);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get sync status',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
@@ -122,7 +181,6 @@ router.post('/finishes', async (req, res) => {
  */
 router.get('/product-categories/active', async (req, res) => {
     try {
-        smartLogger.info('Getting active product categories');
         console.log('Getting active product categories');
         
         const activeCategories = await erpSyncService.getActiveProductCategories();
@@ -135,7 +193,6 @@ router.get('/product-categories/active', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting active categories', { error: error.message });
         console.error('Error getting active categories:', error.message);
         
         res.status(500).json({
@@ -153,7 +210,6 @@ router.get('/product-categories/active', async (req, res) => {
  */
 router.get('/product-categories/mapping', async (req, res) => {
     try {
-        smartLogger.info('Getting category ERP ID mapping');
         console.log('Getting category ERP ID mapping');
         
         const mapping = await erpSyncService.getCategoryMapping();
@@ -166,7 +222,6 @@ router.get('/product-categories/mapping', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting category mapping', { error: error.message });
         console.error('Error getting category mapping:', error.message);
         
         res.status(500).json({
@@ -186,7 +241,6 @@ router.get('/product-categories/:erpId', async (req, res) => {
     try {
         const { erpId } = req.params;
         
-        smartLogger.info(`Getting category by ERP ID: ${erpId}`);
         console.log(`Getting category by ERP ID: ${erpId}`);
         
         const category = await erpSyncService.findCategoryByErpId(erpId);
@@ -207,7 +261,6 @@ router.get('/product-categories/:erpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting category by ERP ID', { error: error.message });
         console.error('Error getting category by ERP ID:', error.message);
         
         res.status(500).json({
@@ -225,7 +278,6 @@ router.get('/product-categories/:erpId', async (req, res) => {
  */
 router.get('/products/active', async (req, res) => {
     try {
-        smartLogger.info('Getting active products');
         console.log('Getting active products');
         
         const activeProducts = await erpSyncService.getActiveProducts();
@@ -238,7 +290,6 @@ router.get('/products/active', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting active products', { error: error.message });
         console.error('Error getting active products:', error.message);
         
         res.status(500).json({
@@ -258,7 +309,6 @@ router.get('/products/category/:categoryErpId', async (req, res) => {
     try {
         const { categoryErpId } = req.params;
         
-        smartLogger.info(`Getting products for category ERP ID: ${categoryErpId}`);
         console.log(`Getting products for category ERP ID: ${categoryErpId}`);
         
         const products = await erpSyncService.getProductsByCategoryErpId(categoryErpId);
@@ -271,7 +321,6 @@ router.get('/products/category/:categoryErpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting products by category', { error: error.message });
         console.error('Error getting products by category:', error.message);
         
         res.status(500).json({
@@ -291,7 +340,6 @@ router.get('/products/:erpId', async (req, res) => {
     try {
         const { erpId } = req.params;
         
-        smartLogger.info(`Getting product by ERP ID: ${erpId}`);
         console.log(`Getting product by ERP ID: ${erpId}`);
         
         const product = await erpSyncService.findProductByErpId(erpId);
@@ -312,7 +360,6 @@ router.get('/products/:erpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting product by ERP ID', { error: error.message });
         console.error('Error getting product by ERP ID:', error.message);
         
         res.status(500).json({
@@ -372,7 +419,6 @@ router.get('/materials/mock', (req, res) => {
  */
 router.get('/materials/active', async (req, res) => {
     try {
-        smartLogger.info('Getting active materials');
         console.log('Getting active materials');
         
         const activeMaterials = await erpSyncService.getActiveMaterials();
@@ -385,7 +431,6 @@ router.get('/materials/active', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting active materials', { error: error.message });
         console.error('Error getting active materials:', error.message);
         
         res.status(500).json({
@@ -405,7 +450,6 @@ router.get('/materials/category/:categoryErpId', async (req, res) => {
     try {
         const { categoryErpId } = req.params;
         
-        smartLogger.info(`Getting materials for category ERP ID: ${categoryErpId}`);
         console.log(`Getting materials for category ERP ID: ${categoryErpId}`);
         
         const materials = await erpSyncService.getMaterialsByCategoryErpId(categoryErpId);
@@ -418,7 +462,6 @@ router.get('/materials/category/:categoryErpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting materials by category', { error: error.message });
         console.error('Error getting materials by category:', error.message);
         
         res.status(500).json({
@@ -438,7 +481,6 @@ router.get('/materials/:erpId', async (req, res) => {
     try {
         const { erpId } = req.params;
         
-        smartLogger.info(`Getting material by ERP ID: ${erpId}`);
         console.log(`Getting material by ERP ID: ${erpId}`);
         
         const material = await erpSyncService.findMaterialByErpId(erpId);
@@ -459,7 +501,6 @@ router.get('/materials/:erpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting material by ERP ID', { error: error.message });
         console.error('Error getting material by ERP ID:', error.message);
         
         res.status(500).json({
@@ -477,7 +518,6 @@ router.get('/materials/:erpId', async (req, res) => {
  */
 router.get('/finishes/active', async (req, res) => {
     try {
-        smartLogger.info('Getting active finishes');
         console.log('Getting active finishes');
         
         const activeFinishes = await erpSyncService.getActiveFinishes();
@@ -490,7 +530,6 @@ router.get('/finishes/active', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting active finishes', { error: error.message });
         console.error('Error getting active finishes:', error.message);
         
         res.status(500).json({
@@ -510,7 +549,6 @@ router.get('/finishes/category/:categoryErpId', async (req, res) => {
     try {
         const { categoryErpId } = req.params;
         
-        smartLogger.info(`Getting finishes for product category ERP ID: ${categoryErpId}`);
         console.log(`Getting finishes for product category ERP ID: ${categoryErpId}`);
         
         const finishes = await erpSyncService.getFinishesByProductCategoryErpId(categoryErpId);
@@ -523,7 +561,6 @@ router.get('/finishes/category/:categoryErpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting finishes by product category', { error: error.message });
         console.error('Error getting finishes by product category:', error.message);
         
         res.status(500).json({
@@ -543,7 +580,6 @@ router.get('/finishes/:erpId', async (req, res) => {
     try {
         const { erpId } = req.params;
         
-        smartLogger.info(`Getting finish by ERP ID: ${erpId}`);
         console.log(`Getting finish by ERP ID: ${erpId}`);
         
         const finish = await erpSyncService.findFinishByErpId(erpId);
@@ -564,7 +600,6 @@ router.get('/finishes/:erpId', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting finish by ERP ID', { error: error.message });
         console.error('Error getting finish by ERP ID:', error.message);
         
         res.status(500).json({
@@ -595,7 +630,6 @@ router.get('/config', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting sync config', { error: error.message });
         console.error('Error getting sync config:', error.message);
         
         res.status(500).json({
@@ -810,7 +844,6 @@ router.get('/', async (req, res) => {
         res.setHeader('Content-Type', 'text/html');
         res.send(htmlContent);
     } catch (error) {
-        smartLogger.error('Error rendering sync dashboard', { error: error.message });
         console.error('Error rendering sync dashboard:', error.message);
         
         res.status(500).json({
