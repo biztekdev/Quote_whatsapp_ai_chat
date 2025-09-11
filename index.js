@@ -95,7 +95,9 @@ app.get("/webhook", (req, res) => {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     smartLogger.info(`Webhook verification ${challenge}`);
+    console.log(`Webhook verification ${challenge}`);
     smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
+    console.log(JSON.stringify({ ...req.body, ...req.query }));
     
     if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBICtBCYTLui") {
         return res.status(200).send(challenge);
@@ -108,7 +110,9 @@ app.get("/webhook2", (req, res) => {
     // const token = req.query["hub.verify_token"];
     // const challenge = req.query["hub.challenge"];
     smartLogger.info('Webhook verification');
+    console.log('Webhook verification');
     smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
+    console.log(JSON.stringify({ ...req.body, ...req.query }));
 
     // if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
     //     return res.status(200).send(challenge);
@@ -121,8 +125,10 @@ app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
     smartLogger.info('Calling webhook');
+    console.log('Calling webhook');
     const message = req.body;
     smartLogger.info(message);
+    console.log(message);
     const result = await messageHandler.handleIncomingMessage(message);
 
     const processingTime = Date.now() - startTime;

@@ -18,7 +18,9 @@ class MessageHandler {
             const from = message.from;
             const messageId = message.id;
             smartLogger.info('Received message');
+            console.log('Received message');
             smartLogger.info(JSON.stringify(message));
+            console.log(JSON.stringify(message));
 
             console.log(`Received ${messageType} message from ${from}`);
 
@@ -26,6 +28,7 @@ class MessageHandler {
             // await this.whatsappService.markAsRead(messageId);
 
             smartLogger.info(messageType);
+            console.log(messageType);
             switch (messageType) {
                 case 'text':
                     smartLogger.info('Handling text message..........');

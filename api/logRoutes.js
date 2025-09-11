@@ -46,6 +46,7 @@ router.get('/', async (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error reading logs', { error: error.message });
+        console.error('Error reading logs:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to read logs',
@@ -67,6 +68,7 @@ router.get('/stats', (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error getting log stats', { error: error.message });
+        console.error('Error getting log stats:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to get log statistics',
@@ -90,6 +92,7 @@ router.get('/level/:level', (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error filtering logs by level', { error: error.message });
+        console.error('Error filtering logs by level:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to filter logs by level',
@@ -121,6 +124,7 @@ router.get('/search', (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error searching logs', { error: error.message });
+        console.error('Error searching logs:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to search logs',
@@ -144,6 +148,7 @@ router.get('/test', (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error creating test log', { error: error.message });
+        console.error('Error creating test log:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to create log entry',
@@ -158,6 +163,7 @@ router.delete('/', (req, res) => {
         const success = smartLogger.clearLogs();
         if (success) {
             smartLogger.info('Logs cleared via API');
+            console.log('Logs cleared via API');
             res.json({
                 success: true,
                 message: 'All logs cleared successfully',
@@ -171,6 +177,7 @@ router.delete('/', (req, res) => {
         }
     } catch (error) {
         smartLogger.error('Error clearing logs', { error: error.message });
+        console.error('Error clearing logs:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to clear logs',
@@ -193,6 +200,7 @@ router.get('/recent', (req, res) => {
         });
     } catch (error) {
         smartLogger.error('Error getting recent logs', { error: error.message });
+        console.error('Error getting recent logs:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to get recent logs',
@@ -338,6 +346,7 @@ router.get('/raw', async (req, res) => {
         res.send(htmlContent);
     } catch (error) {
         smartLogger.error('Error viewing raw logs', { error: error.message });
+        console.error('Error viewing raw logs:', error.message);
         res.status(500).send(`
             <html>
                 <head><title>Error</title></head>
@@ -363,6 +372,7 @@ router.get('/export', (req, res) => {
         res.send(logText);
     } catch (error) {
         smartLogger.error('Error exporting logs', { error: error.message });
+        console.error('Error exporting logs:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to export logs',
