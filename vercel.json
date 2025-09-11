@@ -12,8 +12,12 @@
     ],
     "routes": [
       {
-        "src": "/(api|webhook)/(.*)",
-        "dest": "/$1/$2"
+        "src": "/api/(.*)",
+        "dest": "/api/$1"
+      },
+      {
+        "src": "/webhook/(.*)",
+        "dest": "/webhook/$1"
       },
       {
         "src": "/dashboard.html",
