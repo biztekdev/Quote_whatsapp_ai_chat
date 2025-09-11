@@ -11,7 +11,7 @@ class MessageHandler {
         this.witService = new WitService();
     }
 
-    async handleIncomingMessage(message, value) {
+    async handleIncomingMessage(message, value = null) {
         try {
             const messageType = message.type;
             const from = message.from;
