@@ -12,6 +12,7 @@ import {
 
 const router = express.Router();
 import mongoLogger from '../services/mongoLogger.js';
+import encryptionService from '../services/encryptionService.js';
 
 // ==================== LOGS VIEW ====================
 // Get paginated logs from MongoDB
@@ -40,10 +41,11 @@ router.get('/users', async (req, res) => {
         const { page = 1, limit = 10, search = '' } = req.query;
         const skip = (page - 1) * limit;
         
+        // Search query - can search by name and email (not encrypted)
+        // Username and phone are encrypted, so we'll filter those after decryption
         const query = search ? {
             $or: [
                 { name: { $regex: search, $options: 'i' } },
-                { phone: { $regex: search, $options: 'i' } },
                 { email: { $regex: search, $options: 'i' } }
             ]
         } : {};
@@ -55,14 +57,28 @@ router.get('/users', async (req, res) => {
             
         const total = await User.countDocuments(query);
         
+        // Convert Mongoose documents to plain objects and decrypt user data
+        const plainUsers = users.map(user => user.toObject());
+        let decryptedUsers = encryptionService.decryptUsers(plainUsers);
+        
+        // If search is provided, filter decrypted data
+        if (search) {
+            const searchLower = search.toLowerCase();
+            decryptedUsers = decryptedUsers.filter(user => 
+                user.name?.toLowerCase().includes(searchLower) ||
+                user.phone?.toLowerCase().includes(searchLower) ||
+                user.email?.toLowerCase().includes(searchLower)
+            );
+        }
+        
         res.json({
             success: true,
-            data: users,
+            data: decryptedUsers,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
-                total,
-                pages: Math.ceil(total / limit)
+                total: search ? decryptedUsers.length : total,
+                pages: Math.ceil((search ? decryptedUsers.length : total) / limit)
             }
         });
     } catch (error) {
@@ -73,12 +89,29 @@ router.get('/users', async (req, res) => {
 // Get user by ID
 router.get('/users/:id', async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const { id } = req.params;
+        
+        // Validate ID
+        if (!id || id === 'undefined' || id === 'null') {
+            return res.status(400).json({ success: false, error: 'Invalid user ID' });
+        }
+        
+        // Validate MongoDB ObjectId format
+        if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid user ID format' });
+        }
+        
+        const user = await User.findById(id);
         if (!user) {
             return res.status(404).json({ success: false, error: 'User not found' });
         }
-        res.json({ success: true, data: user });
+        
+        // Convert Mongoose document to plain object and decrypt user data
+        const plainUser = user.toObject();
+        const decryptedUser = encryptionService.decryptUser(plainUser);
+        res.json({ success: true, data: decryptedUser });
     } catch (error) {
+        console.error('Error fetching user:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -86,9 +119,18 @@ router.get('/users/:id', async (req, res) => {
 // Create user
 router.post('/users', async (req, res) => {
     try {
-        const user = new User(req.body);
+        const userData = req.body;
+        
+        // Encrypt sensitive user data (only phone field)
+        const encryptedUserData = encryptionService.encryptUser(userData);
+        
+        const user = new User(encryptedUserData);
         await user.save();
-        res.status(201).json({ success: true, data: user });
+        
+        // Convert Mongoose document to plain object and decrypt for response
+        const plainUser = user.toObject();
+        const decryptedUser = encryptionService.decryptUser(plainUser);
+        res.status(201).json({ success: true, data: decryptedUser });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
     }
@@ -97,15 +139,24 @@ router.post('/users', async (req, res) => {
 // Update user
 router.put('/users/:id', async (req, res) => {
     try {
+        const updateData = req.body;
+        
+        // Encrypt sensitive user data (only phone field)
+        const encryptedUpdateData = encryptionService.encryptUser(updateData);
+        
         const user = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
-            { new: true, runValidators: true }
+            encryptedUpdateData,
+            { new: true, runValidators: false } // Disable validators since we're doing partial updates
         );
         if (!user) {
             return res.status(404).json({ success: false, error: 'User not found' });
         }
-        res.json({ success: true, data: user });
+        
+        // Convert Mongoose document to plain object and decrypt for response
+        const plainUser = user.toObject();
+        const decryptedUser = encryptionService.decryptUser(plainUser);
+        res.json({ success: true, data: decryptedUser });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
     }

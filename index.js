@@ -40,7 +40,7 @@ try {
 }
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 await mongoLogger.info('Port configuration', { port: PORT });
 

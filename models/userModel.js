@@ -11,20 +11,22 @@ const userSchema = new mongoose.Schema({
         required: true,
         unique: true,
         trim: true,
-        index: true
+        index: true,
+        validate: {
+            validator: function(phone) {
+                if (!phone) return false;
+                // Skip validation for encrypted data (contains = and is longer)
+                if (phone.includes('=') && phone.length > 20) return true;
+                return /^[0-9+\-\s()]+$/.test(phone);
+            },
+            message: 'Please enter a valid phone number'
+        }
     },
     email: {
         type: String,
         trim: true,
         lowercase: true,
-        sparse: true, // allows multiple null values
-        validate: {
-            validator: function(email) {
-                if (!email) return true; // email is optional
-                return /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(email);
-            },
-            message: 'Please enter a valid email'
-        }
+        required: false // Make email optional
     },
     isActive: {
         type: Boolean,

@@ -142,6 +142,7 @@
                 <span id="login-alert-message"></span>
             </div>
             
+            <!-- Login Form -->
             <form id="login-form">
                 <div class="form-floating">
                     <input type="text" class="form-control" id="username" placeholder="Username" required>
@@ -172,11 +173,63 @@
                     </button>
                 </div>
             </form>
+            
+            <!-- Signup Form (Hidden by default) -->
+            <form id="signup-form" style="display: none;">
+                <div class="form-floating">
+                    <input type="text" class="form-control" id="signup-name" placeholder="Full Name" required>
+                    <label for="signup-name">
+                        <i class="fas fa-user me-2"></i>Full Name
+                    </label>
+                </div>
+                
+                <div class="form-floating">
+                    <input type="text" class="form-control" id="signup-username" placeholder="Username" required>
+                    <label for="signup-username">
+                        <i class="fas fa-at me-2"></i>Username
+                    </label>
+                </div>
+                
+                <div class="form-floating">
+                    <input type="email" class="form-control" id="signup-email" placeholder="Email Address">
+                    <label for="signup-email">
+                        <i class="fas fa-envelope me-2"></i>Email Address
+                    </label>
+                </div>
+                
+                <div class="form-floating">
+                    <input type="tel" class="form-control" id="signup-phone" placeholder="Phone Number" required>
+                    <label for="signup-phone">
+                        <i class="fas fa-phone me-2"></i>Phone Number
+                    </label>
+                </div>
+                
+                <div class="form-floating position-relative">
+                    <input type="password" class="form-control" id="signup-password" placeholder="Password" required>
+                    <label for="signup-password">
+                        <i class="fas fa-lock me-2"></i>Password
+                    </label>
+                    <button type="button" class="password-toggle" onclick="toggleSignupPassword()">
+                        <i class="fas fa-eye" id="signup-password-toggle-icon"></i>
+                    </button>
+                </div>
+                
+                <div class="d-grid">
+                    <button type="submit" class="btn btn-success btn-login" id="signup-btn">
+                        <span class="signup-text">
+                            <i class="fas fa-user-plus me-2"></i>Create Account
+                        </span>
+                        <span class="loading">
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            Creating account...
+                        </span>
+                    </button>
+                </div>
+            </form>
         </div>
         
         <div class="login-footer">
             <p>&copy; 2024 Quote AI System. All rights reserved.</p>
-            <p><a href="#" onclick="showHelp()">Need help?</a></p>
         </div>
     </div>
 
@@ -198,9 +251,42 @@
             }
         }
         
-        // Show help
-        function showHelp() {
-            alert('Default credentials:\nUsername: admin\nPassword: admin123\n\nPlease change these credentials after first login for security.');
+        // Signup password toggle functionality
+        function toggleSignupPassword() {
+            const passwordInput = document.getElementById('signup-password');
+            const toggleIcon = document.getElementById('signup-password-toggle-icon');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggleIcon.classList.remove('fa-eye');
+                toggleIcon.classList.add('fa-eye-slash');
+            } else {
+                passwordInput.type = 'password';
+                toggleIcon.classList.remove('fa-eye-slash');
+                toggleIcon.classList.add('fa-eye');
+            }
+        }
+        
+        // Toggle between login and signup forms
+        function toggleSignup() {
+            const loginForm = document.getElementById('login-form');
+            const signupForm = document.getElementById('signup-form');
+            const loginFooter = document.querySelector('.login-footer p:last-child');
+            
+            if (signupForm.style.display === 'none') {
+                // Show signup form
+                loginForm.style.display = 'none';
+                signupForm.style.display = 'block';
+                loginFooter.innerHTML = 'Already have an account? <a href="#" onclick="toggleSignup()">Login</a>';
+            } else {
+                // Show login form
+                signupForm.style.display = 'none';
+                loginForm.style.display = 'block';
+                loginFooter.innerHTML = 'Don\'t have an account? <a href="#" onclick="toggleSignup()">Create Account</a>';
+            }
+            
+            // Clear alerts
+            document.getElementById('login-alert').style.display = 'none';
         }
         
         // Login form handling
