@@ -2,6 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
@@ -83,6 +89,42 @@ app.use('/api/sync', erpSyncRoutes);
 
 // Serve static files from public directory
 app.use(express.static('public'));
+
+// Specific routes for HTML files (fallback)
+app.get('/dashboard.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/erd.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'erd.html'));
+});
+
+app.get('/erd-corrected.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'erd-corrected.html'));
+});
+
+// Test route to check if files exist
+app.get('/test-files', (req, res) => {
+    const fs = require('fs');
+    const files = ['dashboard.html', 'login.html', 'erd.html', 'erd-corrected.html'];
+    const results = {};
+    
+    files.forEach(file => {
+        const filePath = path.join(__dirname, 'public', file);
+        results[file] = fs.existsSync(filePath);
+    });
+    
+    res.json({
+        success: true,
+        files: results,
+        publicPath: path.join(__dirname, 'public'),
+        timestamp: new Date().toISOString()
+    });
+});
 
 //     const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
