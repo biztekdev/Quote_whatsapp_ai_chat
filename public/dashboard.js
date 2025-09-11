@@ -498,7 +498,6 @@ class DashboardApp {
             'categories': '<i class="fas fa-folder"></i> Product Categories',
             'products': '<i class="fas fa-box"></i> Products Management',
             'materials': '<i class="fas fa-layer-group"></i> Materials Management',
-            'finish-categories': '<i class="fas fa-palette"></i> Finish Categories',
             'finishes': '<i class="fas fa-paint-brush"></i> Product Finishes',
             'quotes': '<i class="fas fa-file-invoice-dollar"></i> Quotes Management',
             'conversations': '<i class="fas fa-comments"></i> Active Conversations',
@@ -560,9 +559,6 @@ class DashboardApp {
                 break;
             case 'materials':
                 await this.loadMaterials();
-                break;
-            case 'finish-categories':
-                await this.loadFinishCategories();
                 break;
             case 'finishes':
                 await this.loadFinishes();
@@ -690,8 +686,6 @@ class DashboardApp {
         tbody.innerHTML = categories.map(category => `
             <tr>
                 <td>${category.name}</td>
-                <td>${category.description || 'N/A'}</td>
-                <td>${category.sortOrder}</td>
                 <td>
                     <span class="badge bg-${category.isActive ? 'success' : 'danger'}">
                         ${category.isActive ? 'Active' : 'Inactive'}
@@ -847,57 +841,7 @@ class DashboardApp {
         `).join('');
     }
 
-    // Finish Categories Management
-    async loadFinishCategories() {
-        try {
-            this.showLoading();
-            const response = await this.apiCall('/finish-categories');
-            this.renderFinishCategories(response.data);
-            this.hideLoading();
-        } catch (error) {
-            this.hideLoading();
-        }
-    }
 
-    renderFinishCategories(categories) {
-        const tbody = document.getElementById('finish-categories-table-body');
-        if (!categories || categories.length === 0) {
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="5" class="text-center py-5">
-                        <div class="text-muted">
-                            <i class="fas fa-palette fa-3x mb-3"></i>
-                            <h5>No Finish Categories Found</h5>
-                            <p class="mb-0">No finish categories have been created yet.</p>
-                        </div>
-                    </td>
-                </tr>
-            `;
-            return;
-        }
-        tbody.innerHTML = categories.map(category => `
-            <tr>
-                <td>${category.name}</td>
-                <td>${category.description || 'N/A'}</td>
-                <td>${category.sortOrder}</td>
-                <td>
-                    <span class="badge bg-${category.isActive ? 'success' : 'danger'}">
-                        ${category.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                </td>
-                <td>
-                    <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-primary" onclick="app.editFinishCategory('${category._id}')">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn btn-outline-danger" onclick="app.deleteFinishCategory('${category._id}')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </div>
-                </td>
-            </tr>
-        `).join('');
-    }
 
     // Finishes Management
     async loadFinishes() {
@@ -916,7 +860,7 @@ class DashboardApp {
         if (!finishes || finishes.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-5">
+                    <td colspan="4" class="text-center py-5">
                         <div class="text-muted">
                             <i class="fas fa-paint-brush fa-3x mb-3"></i>
                             <h5>No Finishes Found</h5>
@@ -930,10 +874,7 @@ class DashboardApp {
         tbody.innerHTML = finishes.map(finish => `
             <tr>
                 <td>${finish.name}</td>
-                <td>${finish.categoryId?.name || 'N/A'}</td>
                 <td>${finish.productCategoryId?.name || 'N/A'}</td>
-                <td>${finish.priceType}</td>
-                <td>${this.formatCurrency(finish.price)}</td>
                 <td>
                     <span class="badge bg-${finish.isActive ? 'success' : 'danger'}">
                         ${finish.isActive ? 'Active' : 'Inactive'}
@@ -1560,77 +1501,7 @@ class DashboardApp {
         }
     }
 
-    showAddFinishCategoryModal() {
-        const modalHtml = `
-            <div class="modal fade" id="addFinishCategoryModal" tabindex="-1" aria-labelledby="addFinishCategoryModalLabel" aria-hidden="true">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title" id="addFinishCategoryModalLabel">
-                                <i class="fas fa-palette-plus me-2"></i>Add New Finish Category
-                            </h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                        </div>
-                        <div class="modal-body">
-                            <form id="addFinishCategoryForm">
-                                <div class="mb-3">
-                                    <label for="finishCategoryName" class="form-label">Category Name *</label>
-                                    <input type="text" class="form-control" id="finishCategoryName" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="finishCategoryDescription" class="form-label">Description</label>
-                                    <textarea class="form-control" id="finishCategoryDescription" rows="3"></textarea>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="finishCategorySortOrder" class="form-label">Sort Order</label>
-                                    <input type="number" class="form-control" id="finishCategorySortOrder" value="0">
-                                </div>
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="finishCategoryActive" checked>
-                                        <label class="form-check-label" for="finishCategoryActive">
-                                            Active Category
-                                        </label>
-                                    </div>
-                                </div>
-                            </form>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="button" class="btn btn-primary" onclick="app.saveFinishCategory()">
-                                <i class="fas fa-save me-1"></i>Save Finish Category
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        this.showModal(modalHtml, 'addFinishCategoryModal');
-    }
 
-    // Save finish category
-    async saveFinishCategory() {
-        try {
-            const finishCategoryData = {
-                name: document.getElementById('finishCategoryName').value,
-                description: document.getElementById('finishCategoryDescription').value,
-                sortOrder: parseInt(document.getElementById('finishCategorySortOrder').value) || 0,
-                isActive: document.getElementById('finishCategoryActive').checked
-            };
-            
-            await this.apiCall('/finish-categories', {
-                method: 'POST',
-                body: JSON.stringify(finishCategoryData)
-            });
-            
-            this.showAlert('Finish Category added successfully!', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('addFinishCategoryModal')).hide();
-            this.loadFinishCategories();
-        } catch (error) {
-            this.showAlert('Failed to add finish category: ' + error.message, 'danger');
-        }
-    }
 
     showAddFinishModal() {
         const modalHtml = `
@@ -1653,12 +1524,6 @@ class DashboardApp {
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="finishCategory" class="form-label">Finish Category *</label>
-                                            <select class="form-control" id="finishCategory" required>
-                                                <option value="">Select Finish Category</option>
-                                            </select>
-                                        </div>
                                     </div>
                                 </div>
                                 <div class="row">
@@ -1668,26 +1533,6 @@ class DashboardApp {
                                             <select class="form-control" id="finishProductCategory" required>
                                                 <option value="">Select Product Category</option>
                                             </select>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="finishPriceType" class="form-label">Price Type *</label>
-                                            <select class="form-control" id="finishPriceType" required>
-                                                <option value="">Select Price Type</option>
-                                                <option value="fixed">Fixed Price</option>
-                                                <option value="per_sqft">Per Square Foot</option>
-                                                <option value="per_sqm">Per Square Meter</option>
-                                                <option value="percentage">Percentage of Base</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="finishPrice" class="form-label">Price *</label>
-                                            <input type="number" class="form-control" id="finishPrice" step="0.01" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -1721,12 +1566,6 @@ class DashboardApp {
     // Load categories for finish modal
     async loadCategoriesForFinishModal() {
         try {
-            // Load finish categories
-            const finishCategoriesResponse = await this.apiCall('/finish-categories');
-            const finishCategorySelect = document.getElementById('finishCategory');
-            finishCategorySelect.innerHTML = '<option value="">Select Finish Category</option>' +
-                finishCategoriesResponse.data.map(cat => `<option value="${cat._id}">${cat.name}</option>`).join('');
-
             // Load product categories
             const productCategoriesResponse = await this.apiCall('/categories');
             const productCategorySelect = document.getElementById('finishProductCategory');
@@ -1742,10 +1581,7 @@ class DashboardApp {
         try {
             const finishData = {
                 name: document.getElementById('finishName').value,
-                categoryId: document.getElementById('finishCategory').value,
                 productCategoryId: document.getElementById('finishProductCategory').value,
-                priceType: document.getElementById('finishPriceType').value,
-                price: parseFloat(document.getElementById('finishPrice').value),
                 isActive: document.getElementById('finishActive').checked
             };
             
@@ -2200,87 +2036,7 @@ class DashboardApp {
         }
     }
 
-    async editFinishCategory(id) {
-        try {
-            // Fetch finish category data
-            const response = await this.apiCall(`/finish-categories/${id}`);
-            const finishCategory = response.data;
-            
-            const modalHtml = `
-                <div class="modal fade" id="editFinishCategoryModal" tabindex="-1" aria-labelledby="editFinishCategoryModalLabel" aria-hidden="true">
-                    <div class="modal-dialog">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="editFinishCategoryModalLabel">
-                                    <i class="fas fa-palette-edit me-2"></i>Edit Finish Category
-                                </h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <form id="editFinishCategoryForm">
-                                    <input type="hidden" id="editFinishCategoryId" value="${finishCategory._id}">
-                                    <div class="mb-3">
-                                        <label for="editFinishCategoryName" class="form-label">Category Name *</label>
-                                        <input type="text" class="form-control" id="editFinishCategoryName" value="${finishCategory.name}" required>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="editFinishCategoryDescription" class="form-label">Description</label>
-                                        <textarea class="form-control" id="editFinishCategoryDescription" rows="3">${finishCategory.description || ''}</textarea>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="editFinishCategorySortOrder" class="form-label">Sort Order</label>
-                                        <input type="number" class="form-control" id="editFinishCategorySortOrder" value="${finishCategory.sortOrder || 0}">
-                                    </div>
-                                    <div class="mb-3">
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" id="editFinishCategoryActive" ${finishCategory.isActive ? 'checked' : ''}>
-                                            <label class="form-check-label" for="editFinishCategoryActive">
-                                                Active Category
-                                            </label>
-                                        </div>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                <button type="button" class="btn btn-primary" onclick="app.updateFinishCategory()">
-                                    <i class="fas fa-save me-1"></i>Update Finish Category
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            this.showModal(modalHtml, 'editFinishCategoryModal');
-        } catch (error) {
-            this.showAlert('Failed to load finish category data: ' + error.message, 'danger');
-        }
-    }
 
-    // Update finish category
-    async updateFinishCategory() {
-        try {
-            const finishCategoryId = document.getElementById('editFinishCategoryId').value;
-            const finishCategoryData = {
-                name: document.getElementById('editFinishCategoryName').value,
-                description: document.getElementById('editFinishCategoryDescription').value,
-                sortOrder: parseInt(document.getElementById('editFinishCategorySortOrder').value) || 0,
-                isActive: document.getElementById('editFinishCategoryActive').checked
-            };
-            
-            await this.apiCall(`/finish-categories/${finishCategoryId}`, {
-                method: 'PUT',
-                body: JSON.stringify(finishCategoryData)
-            });
-            
-            this.showAlert('Finish Category updated successfully!', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('editFinishCategoryModal')).hide();
-            this.loadFinishCategories();
-        } catch (error) {
-            this.showAlert('Failed to update finish category: ' + error.message, 'danger');
-        }
-    }
 
     async editFinish(id) {
         try {
@@ -2308,14 +2064,6 @@ class DashboardApp {
                                                 <input type="text" class="form-control" id="editFinishName" value="${finish.name}" required>
                                             </div>
                                         </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="editFinishCategory" class="form-label">Finish Category *</label>
-                                                <select class="form-control" id="editFinishCategory" required>
-                                                    <option value="">Select Finish Category</option>
-                                                </select>
-                                            </div>
-                                        </div>
                                     </div>
                                     <div class="row">
                                         <div class="col-md-6">
@@ -2324,26 +2072,6 @@ class DashboardApp {
                                                 <select class="form-control" id="editFinishProductCategory" required>
                                                     <option value="">Select Product Category</option>
                                                 </select>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="editFinishPriceType" class="form-label">Price Type *</label>
-                                                <select class="form-control" id="editFinishPriceType" required>
-                                                    <option value="">Select Price Type</option>
-                                                    <option value="fixed">Fixed Price</option>
-                                                    <option value="per_sqft">Per Square Foot</option>
-                                                    <option value="per_sqm">Per Square Meter</option>
-                                                    <option value="percentage">Percentage of Base</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="editFinishPrice" class="form-label">Price *</label>
-                                                <input type="number" class="form-control" id="editFinishPrice" value="${finish.price || ''}" step="0.01" required>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
@@ -2380,12 +2108,6 @@ class DashboardApp {
     // Load categories for edit finish modal
     async loadCategoriesForEditFinishModal() {
         try {
-            // Load finish categories
-            const finishCategoriesResponse = await this.apiCall('/finish-categories');
-            const finishCategorySelect = document.getElementById('editFinishCategory');
-            finishCategorySelect.innerHTML = '<option value="">Select Finish Category</option>' +
-                finishCategoriesResponse.data.map(cat => `<option value="${cat._id}">${cat.name}</option>`).join('');
-
             // Load product categories
             const productCategoriesResponse = await this.apiCall('/categories');
             const productCategorySelect = document.getElementById('editFinishProductCategory');
@@ -2397,14 +2119,8 @@ class DashboardApp {
             const finishResponse = await this.apiCall(`/finishes/${currentFinishId}`);
             const finish = finishResponse.data;
             
-            if (finish.categoryId) {
-                finishCategorySelect.value = finish.categoryId._id || finish.categoryId;
-            }
             if (finish.productCategoryId) {
                 productCategorySelect.value = finish.productCategoryId._id || finish.productCategoryId;
-            }
-            if (finish.priceType) {
-                document.getElementById('editFinishPriceType').value = finish.priceType;
             }
         } catch (error) {
             console.error('Error loading categories for edit finish modal:', error);
@@ -2417,10 +2133,7 @@ class DashboardApp {
             const finishId = document.getElementById('editFinishId').value;
             const finishData = {
                 name: document.getElementById('editFinishName').value,
-                categoryId: document.getElementById('editFinishCategory').value,
                 productCategoryId: document.getElementById('editFinishProductCategory').value,
-                priceType: document.getElementById('editFinishPriceType').value,
-                price: parseFloat(document.getElementById('editFinishPrice').value),
                 isActive: document.getElementById('editFinishActive').checked
             };
             
@@ -2502,20 +2215,6 @@ class DashboardApp {
         });
     }
 
-    async deleteFinishCategory(id) {
-        // Get finish category name for display in modal
-        const finishCategoryName = document.querySelector(`button[onclick="app.deleteFinishCategory('${id}')"]`)?.closest('tr')?.querySelector('td:first-child')?.textContent || 'Finish Category';
-        
-        this.showDeleteModal('finish category', finishCategoryName, async () => {
-            try {
-                await this.apiCall(`/finish-categories/${id}`, { method: 'DELETE' });
-                this.showAlert('Finish category deleted successfully', 'success');
-                this.loadFinishCategories();
-            } catch (error) {
-                // Error already handled in apiCall
-            }
-        });
-    }
 
     async deleteFinish(id) {
         // Get finish name for display in modal
@@ -2631,13 +2330,6 @@ class DashboardApp {
         }
     }
 
-    async syncFinishCategoriesWithERP() {
-        try {
-            await this.erpSync('finish-categories', 'Finish Categories');
-        } catch (error) {
-            console.error('ERP sync error:', error);
-        }
-    }
 
     async syncFinishesWithERP() {
         try {
@@ -2815,20 +2507,6 @@ class DashboardApp {
         }
     }
 
-    async viewFinishCategories() {
-        try {
-            const response = await this.apiCall('/finish-categories');
-            const finishCategories = response.data;
-            this.showViewModal('Finish Categories', finishCategories, [
-                { key: 'name', label: 'Name' },
-                { key: 'description', label: 'Description' },
-                { key: 'isActive', label: 'Active', type: 'boolean' },
-                { key: 'createdAt', label: 'Created', type: 'date' }
-            ]);
-        } catch (error) {
-            this.showAlert('Failed to load finish categories: ' + error.message, 'danger');
-        }
-    }
 
     async viewFinishes() {
         try {
@@ -2836,8 +2514,6 @@ class DashboardApp {
             const finishes = response.data;
             this.showViewModal('Finishes', finishes, [
                 { key: 'name', label: 'Name' },
-                { key: 'finishCategory', label: 'Category', type: 'object', objectKey: 'name' },
-                { key: 'price', label: 'Price', type: 'currency' },
                 { key: 'isActive', label: 'Active', type: 'boolean' },
                 { key: 'createdAt', label: 'Created', type: 'date' }
             ]);

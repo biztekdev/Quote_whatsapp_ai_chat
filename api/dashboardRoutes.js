@@ -454,7 +454,6 @@ router.get('/finishes', async (req, res) => {
         if (productCategoryId) query.productCategoryId = productCategoryId;
         
         const finishes = await ProductFinish.find(query)
-            .populate('categoryId')
             .populate('productCategoryId')
             .sort({ sortOrder: 1, name: 1 });
             
