@@ -103,6 +103,19 @@ app.get("/webhook", (req, res) => {
     return res.sendStatus(403);
 });
 
+app.get("/webhook2", (req, res) => {
+    // const mode = req.query["hub.mode"];
+    // const token = req.query["hub.verify_token"];
+    // const challenge = req.query["hub.challenge"];
+    smartLogger.info('Webhook verification');
+    smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
+
+    // if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
+    //     return res.status(200).send(challenge);
+    // }
+    return res.sendStatus(200);
+});
+
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();

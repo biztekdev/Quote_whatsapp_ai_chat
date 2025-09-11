@@ -130,16 +130,9 @@ router.get('/search', (req, res) => {
 });
 
 // Test logger endpoint
-router.post('/test', (req, res) => {
+router.get('/test', (req, res) => {
     try {
-        const { message, level = 'info', meta = {} } = req.body;
-        
-        if (!message) {
-            return res.status(400).json({
-                success: false,
-                error: 'Message is required'
-            });
-        }
+        const { message = 'Test log entry created via API', level = 'info', meta = {} } = req.body;
         
         smartLogger[level](message, meta);
         

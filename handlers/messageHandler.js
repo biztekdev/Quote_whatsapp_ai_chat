@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
+import smartLogger from '../services/smartLogger.js';
 
 dotenv.config();
 
@@ -16,14 +17,18 @@ class MessageHandler {
             const messageType = message.type;
             const from = message.from;
             const messageId = message.id;
+            smartLogger.info('Received message');
+            smartLogger.info(JSON.stringify(message));
 
             console.log(`Received ${messageType} message from ${from}`);
 
             // Mark message as read
-            await this.whatsappService.markAsRead(messageId);
+            // await this.whatsappService.markAsRead(messageId);
 
+            smartLogger.info(messageType);
             switch (messageType) {
                 case 'text':
+                    smartLogger.info('Handling text message..........');
                     await this.handleTextMessage(message, from);
                     break;
                 case 'image':
@@ -54,12 +59,16 @@ class MessageHandler {
     }
 
     async handleTextMessage(message, from) {
+        smartLogger.info('Handling text message');
         try {
             const messageText = message.text.body;
             console.log(`Text message: ${messageText}`);
 
             // Get current conversation state
             const conversationState = await conversationService.getConversationState(from);
+            
+        smartLogger.info("conversationState");
+        smartLogger.info(JSON.stringify(conversationState));
             
             // Process message through our conversation flow
             await this.processConversationFlow(messageText, from, conversationState);
