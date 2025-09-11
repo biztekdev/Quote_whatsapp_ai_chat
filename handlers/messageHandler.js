@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
-import smartLogger from '../services/smartLogger.js';
+import mongoLogger from '../services/mongoLogger.js';
 
 dotenv.config();
 
@@ -17,21 +17,16 @@ class MessageHandler {
             const messageType = message.type;
             const from = message.from;
             const messageId = message.id;
-            smartLogger.info('Received message');
-            console.log('Received message');
-            smartLogger.info(JSON.stringify(message));
-            console.log(JSON.stringify(message));
-
-            console.log(`Received ${messageType} message from ${from}`);
+            await mongoLogger.logMessage(message, from);
+            await mongoLogger.info('Message received', { messageType, from, messageId });
 
             // Mark message as read
             // await this.whatsappService.markAsRead(messageId);
 
-            smartLogger.info(messageType);
-            console.log(messageType);
+            await mongoLogger.info('Processing message type', { messageType });
             switch (messageType) {
                 case 'text':
-                    smartLogger.info('Handling text message..........');
+                    await mongoLogger.info('Handling text message');
                     await this.handleTextMessage(message, from);
                     break;
                 case 'image':
@@ -50,34 +45,33 @@ class MessageHandler {
                     await this.handleInteractiveMessage(message, from);
                     break;
                 default:
-                    console.log(`Unsupported message type: ${messageType}`);
+                    await mongoLogger.warn('Unsupported message type', { messageType });
                     await this.whatsappService.sendMessage(
                         from,
                         "Sorry, I don't support this type of message yet."
                     );
             }
         } catch (error) {
-            console.error('Error handling incoming message:', error);
+            await mongoLogger.logError(error, { source: 'message-handler' });
         }
     }
 
     async handleTextMessage(message, from) {
-        smartLogger.info('Handling text message');
+        await mongoLogger.info('Handling text message');
         try {
             const messageText = message.text.body;
-            console.log(`Text message: ${messageText}`);
+            await mongoLogger.info('Text message content', { messageText });
 
             // Get current conversation state
             const conversationState = await conversationService.getConversationState(from);
             
-        smartLogger.info("conversationState");
-        smartLogger.info(JSON.stringify(conversationState));
+        await mongoLogger.info('Conversation state retrieved', { conversationState });
             
             // Process message through our conversation flow
             await this.processConversationFlow(messageText, from, conversationState);
             
         } catch (error) {
-            console.error('Error handling text message:', error);
+            await mongoLogger.logError(error, { source: 'text-message-handler' });
             await this.whatsappService.sendMessage(
                 from,
                 "Sorry, I encountered an error processing your message. Please try again."
@@ -90,7 +84,7 @@ class MessageHandler {
             const currentStep = conversationState.currentStep;
             const conversationData = conversationState.conversationData || {};
 
-            console.log(`🔄 Processing step: ${currentStep} for ${from}`);
+            await mongoLogger.info('Processing conversation step', { currentStep, from });
 
             switch (currentStep) {
                 case 'start':
@@ -118,7 +112,7 @@ class MessageHandler {
                     await this.handleStartStep(messageText, from);
             }
         } catch (error) {
-            console.error('Error in conversation flow:', error);
+            await mongoLogger.logError(error, { source: 'conversation-flow' });
             await this.whatsappService.sendMessage(
                 from,
                 "I'm sorry, something went wrong. Let me restart our conversation. Please type 'hi' to begin."
@@ -487,7 +481,7 @@ Would you like to:`;
             });
 
         } catch (error) {
-            console.error('Error generating quote:', error);
+            await mongoLogger.logError(error, { source: 'quote-generation' });
             await this.whatsappService.sendMessage(
                 from,
                 "I'm sorry, there was an error generating your quote. Please contact our support team for assistance."
@@ -502,7 +496,7 @@ Would you like to:`;
         return greetings.some(greeting => lowerMessage.includes(greeting));
     }
 
-    parseDimensionsManually(dimensionString, dimensionNames) {
+    async parseDimensionsManually(dimensionString, dimensionNames) {
         try {
             const values = [];
             const dimensionStringLower = dimensionString.toLowerCase().trim();
@@ -535,13 +529,13 @@ Would you like to:`;
 
             return result.length === dimensionNames.length ? result : [];
         } catch (error) {
-            console.error('Error parsing dimensions manually:', error);
+            await mongoLogger.logError(error, { source: 'dimension-parsing' });
             return [];
         }
     }
 
     async handleImageMessage(message, from) {
-        console.log('Received image message');
+        await mongoLogger.info('Received image message', { from });
         await this.whatsappService.sendMessage(
             from,
             "Thank you for sharing the image! 📸 Our team will review it and get back to you."
@@ -549,7 +543,7 @@ Would you like to:`;
     }
 
     async handleDocumentMessage(message, from) {
-        console.log('Received document message');
+        await mongoLogger.info('Received document message', { from });
         await this.whatsappService.sendMessage(
             from,
             "Thank you for the document! 📄 We've received it and will review it shortly."
@@ -557,7 +551,7 @@ Would you like to:`;
     }
 
     async handleAudioMessage(message, from) {
-        console.log('Received audio message');
+        await mongoLogger.info('Received audio message', { from });
         await this.whatsappService.sendMessage(
             from,
             "Thank you for the voice message! 🎵 Our team will listen to it and respond accordingly."
@@ -565,7 +559,7 @@ Would you like to:`;
     }
 
     async handleVideoMessage(message, from) {
-        console.log('Received video message');
+        await mongoLogger.info('Received video message', { from });
         await this.whatsappService.sendMessage(
             from,
             "Thank you for the video! 🎥 We've received it and will review it shortly."
@@ -573,12 +567,12 @@ Would you like to:`;
     }
 
     async handleInteractiveMessage(message, from) {
-        console.log('Received interactive message');
+        await mongoLogger.info('Received interactive message', { from });
         
         if (message.interactive.type === 'button_reply') {
             const buttonId = message.interactive.button_reply.id;
             const buttonTitle = message.interactive.button_reply.title;
-            console.log(`Button clicked: ${buttonId} - ${buttonTitle}`);
+            await mongoLogger.info('Button clicked', { buttonId, buttonTitle, from });
             
             // Get current conversation state
             const conversationState = await conversationService.getConversationState(from);
@@ -617,7 +611,7 @@ Would you like to:`;
         } else if (message.interactive.type === 'list_reply') {
             const listId = message.interactive.list_reply.id;
             const listTitle = message.interactive.list_reply.title;
-            console.log(`List item selected: ${listId} - ${listTitle}`);
+            await mongoLogger.info('List item selected', { listId, listTitle, from });
             
             // Process the list selection as a regular text message
             await this.processConversationFlow(listId, from, await conversationService.getConversationState(from));

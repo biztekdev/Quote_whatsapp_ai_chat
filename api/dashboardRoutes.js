@@ -11,6 +11,26 @@ import {
 } from '../models/index.js';
 
 const router = express.Router();
+import mongoLogger from '../services/mongoLogger.js';
+
+// ==================== LOGS VIEW ====================
+// Get paginated logs from MongoDB
+router.get('/logs', async (req, res) => {
+    try {
+        const { page = 1, limit = 50, level, search } = req.query;
+        let filters = {};
+        if (level) filters.level = level;
+        if (search) filters.message = { $regex: search, $options: 'i' };
+        const result = await mongoLogger.getLogsPaginated(parseInt(page), parseInt(limit), filters);
+        res.json({
+            success: true,
+            data: result.logs,
+            pagination: result.pagination
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 // ==================== USER CRUD OPERATIONS ====================
 

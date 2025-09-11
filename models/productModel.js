@@ -11,15 +11,16 @@ const productCategorySchema = new mongoose.Schema({
     name: {
         type: String,
         required: true,
-        trim: true
-    },
-    description: {
-        type: String,
+        unique: true,
         trim: true
     },
     sub_names: {
         type: [String], // Array of strings for sub-category names
         default: []
+    },
+    description: {
+        type: String,
+        trim: true
     },
     isActive: {
         type: Boolean,
@@ -29,6 +30,7 @@ const productCategorySchema = new mongoose.Schema({
         type: Number,
         default: 0,
         index: true // Add index for better sorting performance
+
     }
 }, {
     timestamps: true,
@@ -66,7 +68,7 @@ const productSchema = new mongoose.Schema({
     basePrice: {
         type: Number,
         default: 0,
-        min: 0
+        min: 0,
     },
     dimensionFields: [{
         name: {

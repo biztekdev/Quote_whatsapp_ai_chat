@@ -4,12 +4,21 @@ class DashboardApp {
         this.apiBase = '/api/dashboard';
         this.currentPage = 1;
         this.currentSection = 'dashboard';
+        this.authToken = localStorage.getItem('authToken');
+        this.user = JSON.parse(localStorage.getItem('user') || '{}');
         this.init();
     }
 
     async init() {
+        // Check authentication first
+        if (!this.checkAuth()) {
+            return;
+        }
+        
+        this.updateUserInfo();
         await this.loadDashboardStats();
         this.setupEventListeners();
+        this.setupLogsSection();
     }
 
     setupEventListeners() {
@@ -27,10 +36,267 @@ class DashboardApp {
         });
     }
 
+    // Authentication Methods
+    checkAuth() {
+        if (!this.authToken) {
+            this.redirectToLogin();
+            return false;
+        }
+        
+        // Verify token is still valid
+        this.verifyToken().catch(() => {
+            this.redirectToLogin();
+        });
+        
+        return true;
+    }
+    
+    async verifyToken() {
+        try {
+            const response = await fetch('/api/auth/verify', {
+                headers: {
+                    'Authorization': `Bearer ${this.authToken}`
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (!data.success) {
+                throw new Error('Token verification failed');
+            }
+            
+            return data;
+        } catch (error) {
+            console.error('Token verification error:', error);
+            this.redirectToLogin();
+            throw error;
+        }
+    }
+    
+    redirectToLogin() {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+    }
+    
+    updateUserInfo() {
+        const userNameEl = document.getElementById('user-name');
+        const userRoleEl = document.getElementById('user-role');
+        
+        if (userNameEl) {
+            userNameEl.textContent = this.user.name || this.user.username || 'Admin';
+        }
+        
+        if (userRoleEl) {
+            userRoleEl.textContent = this.user.role || 'Administrator';
+        }
+    }
+    
+    async logout() {
+        try {
+            // Call logout API
+            await fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.authToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (error) {
+            console.error('Logout API error:', error);
+        } finally {
+            // Clear local storage and redirect
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+    }
+
     // Utility Methods
     showLoading() {
         document.getElementById('loading').style.display = 'block';
     }
+
+        setupLogsSection() {
+            // Logs section is already in HTML, no need to add navigation
+            // The showSection function will handle logs loading
+        }
+
+        async loadLogs(page = 1, limit = 50) {
+            this.showLogsLoading();
+            this.hideLogsError();
+            try {
+                const response = await fetch(`/api/logs?page=${page}&limit=${limit}`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.authToken}`
+                    }
+                });
+                
+                if (response.status === 401) {
+                    this.redirectToLogin();
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.success) {
+                    this.renderLogs(data.data);
+                    this.renderLogsPagination(data.pagination);
+                } else {
+                    this.showLogsError(data.error || 'Failed to load logs');
+                }
+            } catch (error) {
+                console.error('Error loading logs:', error);
+                this.showLogsError('Failed to load logs: ' + error.message);
+            }
+            this.hideLogsLoading();
+        }
+
+        renderLogs(logs) {
+            const tbody = document.getElementById('logs-table-body');
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-4">
+                            <i class="fas fa-file-alt fa-2x mb-2"></i>
+                            <br>No logs available
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            tbody.innerHTML = logs.map(log => `
+                <tr>
+                    <td>
+                        <small class="text-muted">${new Date(log.timestamp).toLocaleString()}</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-${this.getLogLevelColor(log.level)}">
+                            ${log.level.toUpperCase()}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="log-message" style="max-width: 400px; word-wrap: break-word;">
+                            ${this.escapeHtml(log.message)}
+                        </div>
+                    </td>
+                    <td>
+                        <small class="text-muted">${log.source || 'System'}</small>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        renderLogsPagination(pagination) {
+            const container = document.getElementById('logs-pagination');
+            if (!container || !pagination || pagination.pages <= 1) {
+                if (container) container.innerHTML = '';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            // Previous button
+            if (pagination.page > 1) {
+                const prevBtn = document.createElement('button');
+                prevBtn.className = 'btn btn-sm btn-outline-primary me-1';
+                prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i> Previous';
+                prevBtn.onclick = () => this.loadLogs(pagination.page - 1, pagination.limit);
+                container.appendChild(prevBtn);
+            }
+            
+            // Page numbers
+            for (let i = 1; i <= pagination.pages; i++) {
+                const btn = document.createElement('button');
+                btn.className = `btn btn-sm ${i === pagination.page ? 'btn-primary' : 'btn-outline-primary'} mx-1`;
+                btn.textContent = i;
+                btn.onclick = () => this.loadLogs(i, pagination.limit);
+                container.appendChild(btn);
+            }
+            
+            // Next button
+            if (pagination.page < pagination.pages) {
+                const nextBtn = document.createElement('button');
+                nextBtn.className = 'btn btn-sm btn-outline-primary ms-1';
+                nextBtn.innerHTML = 'Next <i class="fas fa-chevron-right"></i>';
+                nextBtn.onclick = () => this.loadLogs(pagination.page + 1, pagination.limit);
+                container.appendChild(nextBtn);
+            }
+        }
+
+        // Logs helper methods
+        showLogsLoading() {
+            document.getElementById('logs-loading').style.display = 'block';
+            document.getElementById('logs-content').style.display = 'none';
+        }
+
+        hideLogsLoading() {
+            document.getElementById('logs-loading').style.display = 'none';
+            document.getElementById('logs-content').style.display = 'block';
+        }
+
+        showLogsError(message) {
+            document.getElementById('logs-error-message').textContent = message;
+            document.getElementById('logs-error').style.display = 'block';
+        }
+
+        hideLogsError() {
+            document.getElementById('logs-error').style.display = 'none';
+        }
+
+        getLogLevelColor(level) {
+            const colors = {
+                'error': 'danger',
+                'warn': 'warning',
+                'info': 'info',
+                'debug': 'secondary',
+                'verbose': 'light'
+            };
+            return colors[level.toLowerCase()] || 'secondary';
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Logs action methods
+        async refreshLogs() {
+            await this.loadLogs();
+        }
+
+        async clearLogs() {
+            if (confirm('Are you sure you want to clear all logs? This action cannot be undone.')) {
+                try {
+                    this.showLogsLoading();
+                    const response = await fetch('/api/logs', {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.authToken}`
+                        }
+                    });
+                    
+                    if (response.status === 401) {
+                        this.redirectToLogin();
+                        return;
+                    }
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        this.showAlert('Logs cleared successfully', 'success');
+                        await this.loadLogs();
+                    } else {
+                        this.showLogsError(data.error || 'Failed to clear logs');
+                    }
+                } catch (error) {
+                    console.error('Error clearing logs:', error);
+                    this.showLogsError('Failed to clear logs: ' + error.message);
+                }
+                this.hideLogsLoading();
+            }
+        }
 
     hideLoading() {
         document.getElementById('loading').style.display = 'none';
@@ -67,10 +333,17 @@ class DashboardApp {
             const response = await fetch(`${this.apiBase}${endpoint}`, {
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.authToken}`,
                     ...options.headers
                 },
                 ...options
             });
+            
+            // Handle authentication errors
+            if (response.status === 401) {
+                this.redirectToLogin();
+                return;
+            }
             
             const data = await response.json();
             
@@ -173,10 +446,15 @@ class DashboardApp {
         });
         
         // Show selected section
-        document.getElementById(`${sectionName}-section`).style.display = 'block';
+        const targetSection = document.getElementById(`${sectionName}-section`);
+        if (targetSection) {
+            targetSection.style.display = 'block';
+        }
         
         // Add active class to clicked nav link
-        event.target.classList.add('active');
+        if (event && event.target) {
+            event.target.classList.add('active');
+        }
         
         this.currentSection = sectionName;
         
@@ -210,6 +488,9 @@ class DashboardApp {
                 break;
             case 'conversations':
                 await this.loadConversations();
+                break;
+            case 'logs':
+                await this.loadLogs();
                 break;
         }
     }
@@ -802,6 +1083,10 @@ class DashboardApp {
 // Global functions for HTML onclick events
 function showSection(sectionName) {
     app.showSection(sectionName);
+}
+
+function logout() {
+    app.logout();
 }
 
 // Initialize the app

@@ -1,5 +1,5 @@
 import express from 'express';
-import smartLogger from '../services/smartLogger.js';
+import mongoLogger from '../services/mongoLogger.js';
 
 const router = express.Router();
 
@@ -10,7 +10,10 @@ router.get('/', async (req, res) => {
         
         // If raw=true, return the raw log content
         if (raw === 'true') {
-            const logContent = await smartLogger.getRawLogs();
+            const logs = await mongoLogger.getRecentLogs(1000);
+            const logContent = logs.map(log => 
+                `${log.timestamp} : [${log.level}] ${log.message}`
+            ).join('\n');
             
             if (!logContent) {
                 return res.status(404).send('No logs available');
@@ -23,13 +26,24 @@ router.get('/', async (req, res) => {
             return res.send(logContent);
         }
         
-        let logs;
         if (level) {
-            logs = smartLogger.filterLogsByLevel(level);
+            const result = await mongoLogger.getLogsByLevel(level, parseInt(page), parseInt(limit));
+            return res.json({
+                success: true,
+                data: result.logs,
+                pagination: result.pagination,
+                timestamp: new Date().toISOString()
+            });
         } else if (search) {
-            logs = smartLogger.searchLogs(search);
+            const result = await mongoLogger.searchLogs(search, parseInt(page), parseInt(limit));
+            return res.json({
+                success: true,
+                data: result.logs,
+                pagination: result.pagination,
+                timestamp: new Date().toISOString()
+            });
         } else {
-            const result = smartLogger.getLogsPaginated(parseInt(page), parseInt(limit));
+            const result = await mongoLogger.getLogsPaginated(parseInt(page), parseInt(limit));
             return res.json({
                 success: true,
                 data: result.logs,
@@ -37,16 +51,8 @@ router.get('/', async (req, res) => {
                 timestamp: new Date().toISOString()
             });
         }
-        
-        res.json({
-            success: true,
-            data: logs,
-            total: logs.length,
-            timestamp: new Date().toISOString()
-        });
     } catch (error) {
-        smartLogger.error('Error reading logs', { error: error.message });
-        console.error('Error reading logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'get-logs' });
         res.status(500).json({
             success: false,
             error: 'Failed to read logs',
@@ -56,10 +62,10 @@ router.get('/', async (req, res) => {
 });
 
 // Get log statistics
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
     try {
-        const stats = smartLogger.getLogStats();
-        const envInfo = smartLogger.getEnvironmentInfo();
+        const stats = await mongoLogger.getLogStats();
+        const envInfo = mongoLogger.getConnectionStatus();
         res.json({
             success: true,
             data: stats,
@@ -67,8 +73,7 @@ router.get('/stats', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting log stats', { error: error.message });
-        console.error('Error getting log stats:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'log-stats' });
         res.status(500).json({
             success: false,
             error: 'Failed to get log statistics',
@@ -78,10 +83,11 @@ router.get('/stats', (req, res) => {
 });
 
 // Filter logs by level
-router.get('/level/:level', (req, res) => {
+router.get('/level/:level', async (req, res) => {
     try {
         const { level } = req.params;
-        const logs = smartLogger.filterLogsByLevel(level);
+        const result = await mongoLogger.getLogsByLevel(level, 1, 1000);
+        const logs = result.logs;
         
         res.json({
             success: true,
@@ -91,8 +97,7 @@ router.get('/level/:level', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error filtering logs by level', { error: error.message });
-        console.error('Error filtering logs by level:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'filter-logs-by-level' });
         res.status(500).json({
             success: false,
             error: 'Failed to filter logs by level',
@@ -102,7 +107,7 @@ router.get('/level/:level', (req, res) => {
 });
 
 // Search logs by message content
-router.get('/search', (req, res) => {
+router.get('/search', async (req, res) => {
     try {
         const { q: searchTerm } = req.query;
         
@@ -113,7 +118,8 @@ router.get('/search', (req, res) => {
             });
         }
         
-        const logs = smartLogger.searchLogs(searchTerm);
+        const result = await mongoLogger.searchLogs(searchTerm, 1, 1000);
+        const logs = result.logs;
         
         res.json({
             success: true,
@@ -123,8 +129,7 @@ router.get('/search', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error searching logs', { error: error.message });
-        console.error('Error searching logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'search-logs' });
         res.status(500).json({
             success: false,
             error: 'Failed to search logs',
@@ -134,11 +139,11 @@ router.get('/search', (req, res) => {
 });
 
 // Test logger endpoint
-router.get('/test', (req, res) => {
+router.get('/test', async (req, res) => {
     try {
         const { message = 'Test log entry created via API', level = 'info', meta = {} } = req.body;
         
-        smartLogger[level](message, meta);
+        await mongoLogger[level](message, meta);
         
         res.json({
             success: true,
@@ -147,8 +152,7 @@ router.get('/test', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error creating test log', { error: error.message });
-        console.error('Error creating test log:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'create-test-log' });
         res.status(500).json({
             success: false,
             error: 'Failed to create log entry',
@@ -158,12 +162,11 @@ router.get('/test', (req, res) => {
 });
 
 // Clear all logs
-router.delete('/', (req, res) => {
+router.delete('/', async (req, res) => {
     try {
-        const success = smartLogger.clearLogs();
+        const success = await mongoLogger.clearAllLogs();
         if (success) {
-            smartLogger.info('Logs cleared via API');
-            console.log('Logs cleared via API');
+            await mongoLogger.info('Logs cleared via API');
             res.json({
                 success: true,
                 message: 'All logs cleared successfully',
@@ -176,8 +179,7 @@ router.delete('/', (req, res) => {
             });
         }
     } catch (error) {
-        smartLogger.error('Error clearing logs', { error: error.message });
-        console.error('Error clearing logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'clear-logs' });
         res.status(500).json({
             success: false,
             error: 'Failed to clear logs',
@@ -187,10 +189,10 @@ router.delete('/', (req, res) => {
 });
 
 // Get recent logs (last 10)
-router.get('/recent', (req, res) => {
+router.get('/recent', async (req, res) => {
     try {
         const { limit = 10 } = req.query;
-        const result = smartLogger.readLogsPaginated(1, parseInt(limit));
+        const result = await mongoLogger.getLogsPaginated(1, parseInt(limit));
         
         res.json({
             success: true,
@@ -199,8 +201,7 @@ router.get('/recent', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        smartLogger.error('Error getting recent logs', { error: error.message });
-        console.error('Error getting recent logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'get-recent-logs' });
         res.status(500).json({
             success: false,
             error: 'Failed to get recent logs',
@@ -212,8 +213,11 @@ router.get('/recent', (req, res) => {
 // View raw log file in browser
 router.get('/raw', async (req, res) => {
     try {
-        const logContent = await smartLogger.getRawLogs();
-        const envInfo = smartLogger.getEnvironmentInfo();
+        const logs = await mongoLogger.getRecentLogs(1000);
+        const logContent = logs.map(log => 
+            `${log.timestamp} : [${log.level}] ${log.message}`
+        ).join('\n');
+        const envInfo = mongoLogger.getConnectionStatus();
         
         if (!logContent) {
             return res.status(404).send(`
@@ -345,8 +349,7 @@ router.get('/raw', async (req, res) => {
         
         res.send(htmlContent);
     } catch (error) {
-        smartLogger.error('Error viewing raw logs', { error: error.message });
-        console.error('Error viewing raw logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'view-raw-logs' });
         res.status(500).send(`
             <html>
                 <head><title>Error</title></head>
@@ -360,9 +363,9 @@ router.get('/raw', async (req, res) => {
 });
 
 // Export logs as text file
-router.get('/export', (req, res) => {
+router.get('/export', async (req, res) => {
     try {
-        const logs = smartLogger.readLogs();
+        const logs = await mongoLogger.getRecentLogs(10000);
         const logText = logs.map(log => 
             `${log.timestamp} : [${log.level}] ${log.message}`
         ).join('\n');
@@ -371,8 +374,7 @@ router.get('/export', (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename=logs.txt');
         res.send(logText);
     } catch (error) {
-        smartLogger.error('Error exporting logs', { error: error.message });
-        console.error('Error exporting logs:', error.message);
+        await mongoLogger.logError(error, { endpoint: 'export-logs' });
         res.status(500).json({
             success: false,
             error: 'Failed to export logs',

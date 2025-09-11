@@ -5,34 +5,38 @@ import dotenv from 'dotenv';
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
-import smartLogger from './services/smartLogger.js';
+import mongoLogger from './services/mongoLogger.js';
 import webhookService from './services/webhookService.js';
 import database, { connectDB } from './config/database.js';
 import testRoutes from './api/testRoutes.js';
 import dashboardRoutes from './api/dashboardRoutes.js';
 import logRoutes from './api/logRoutes.js';
+import authRoutes from './api/authRoutes.js';
+import { authenticateToken } from './middleware/auth.js';
 import erpSyncRoutes from './api/erpSyncRoutes.js';
+
+
 
 // Load environment variables
 dotenv.config();
 
-console.log('Environment loaded, starting server...');
+await mongoLogger.info('Environment loaded, starting server...');
 
 // Initialize database connection
 let dbConnected = false;
 try {
     await connectDB();
     dbConnected = true;
-    console.log('✅ Database connected successfully');
+    await mongoLogger.info('Database connected successfully');
 } catch (error) {
-    console.warn('⚠️  Database connection failed, continuing without MongoDB:', error.message);
-    console.log('💡 To enable database features, please configure MONGODB_URI in .env');
+    await mongoLogger.warn('Database connection failed, continuing without MongoDB', { error: error.message });
+    await mongoLogger.info('To enable database features, please configure MONGODB_URI in .env');
 }
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-console.log(`Port set to: ${PORT}`);
+await mongoLogger.info('Port configuration', { port: PORT });
 
 // Middleware
 app.use(cors());
@@ -40,16 +44,16 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Initialize services
-console.log('Initializing WhatsApp service...');
+await mongoLogger.info('Initializing WhatsApp service...');
 const whatsappService = new WhatsAppService();
 
-console.log('Initializing WitService...');
+await mongoLogger.info('Initializing WitService...');
 const witService = new WitService();
 
-console.log('Initializing message handler...');
+await mongoLogger.info('Initializing message handler...');
 const messageHandler = new MessageHandler(whatsappService, witService.client);
 
-console.log('Services initialized successfully!');
+await mongoLogger.info('Services initialized successfully!');
 
 // Routes
 app.get('/', (req, res) => {
@@ -63,16 +67,18 @@ app.get('/', (req, res) => {
     });
 });
 
+// Authentication routes (no auth required)
+app.use('/api/auth', authRoutes);
+
 // Test API routes for the relational database
 app.use('/api/test', testRoutes);
 
-// Dashboard API routes
-app.use('/api/dashboard', dashboardRoutes);
+// Dashboard API routes (protected)
+app.use('/api/dashboard', authenticateToken, dashboardRoutes);
 
-// Log API routes
-app.use('/api/logs', logRoutes);
+// Log API routes (protected)
+app.use('/api/logs', authenticateToken, logRoutes);
 
-// ERP Sync API routes
 app.use('/api/sync', erpSyncRoutes);
 
 // Serve static files from public directory
@@ -94,14 +100,11 @@ app.use(express.static('public'));
 
 
 // WhatsApp webhook verification
-app.get("/webhook", (req, res) => {
+app.get("/webhook", async (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    smartLogger.info(`Webhook verification ${challenge}`);
-    console.log(`Webhook verification ${challenge}`);
-    smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
-    console.log(JSON.stringify({ ...req.body, ...req.query }));
+    await mongoLogger.info('Webhook verification', { challenge, query: req.query, body: req.body });
     
     if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBICtBCYTLui") {
         return res.status(200).send(challenge);
@@ -109,14 +112,11 @@ app.get("/webhook", (req, res) => {
     return res.sendStatus(403);
 });
 
-app.get("/webhook2", (req, res) => {
+app.get("/webhook2", async (req, res) => {
     // const mode = req.query["hub.mode"];
     // const token = req.query["hub.verify_token"];
     // const challenge = req.query["hub.challenge"];
-    smartLogger.info('Webhook verification');
-    console.log('Webhook verification');
-    smartLogger.info(JSON.stringify({ ...req.body, ...req.query }));
-    console.log(JSON.stringify({ ...req.body, ...req.query }));
+    await mongoLogger.info('Webhook verification (webhook2)', { query: req.query, body: req.body });
 
     // if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
     //     return res.status(200).send(challenge);
@@ -128,15 +128,12 @@ app.get("/webhook2", (req, res) => {
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
-    smartLogger.info('Calling webhook');
-    console.log('Calling webhook');
+    await mongoLogger.logWebhook(req.body, 'webhook');
     const message = req.body;
-    smartLogger.info(message);
-    console.log(message);
     const result = await messageHandler.handleIncomingMessage(message);
 
     const processingTime = Date.now() - startTime;
-    console.log(`⚡ Webhook processed in ${processingTime}ms`);
+    await mongoLogger.info('Webhook processed', { processingTime: `${processingTime}ms` });
 
     res.status(200).json({
         status: 'ok',
@@ -164,7 +161,7 @@ app.post('/send-message', async (req, res) => {
             data: result
         });
     } catch (error) {
-        console.error('Send message error:', error);
+        await mongoLogger.logError(error, { endpoint: 'send-message' });
         res.status(500).json({
             error: 'Failed to send message',
             details: error.message
@@ -190,7 +187,7 @@ app.post('/send-template', async (req, res) => {
             data: result
         });
     } catch (error) {
-        console.error('Send template error:', error);
+        await mongoLogger.logError(error, { endpoint: 'send-template' });
         res.status(500).json({
             error: 'Failed to send template message',
             details: error.message
@@ -216,7 +213,7 @@ app.post('/send-media', async (req, res) => {
             data: result
         });
     } catch (error) {
-        console.error('Send media error:', error);
+        await mongoLogger.logError(error, { endpoint: 'send-media' });
         res.status(500).json({
             error: 'Failed to send media message',
             details: error.message
@@ -242,7 +239,7 @@ app.post('/send-buttons', async (req, res) => {
             data: result
         });
     } catch (error) {
-        console.error('Send button message error:', error);
+        await mongoLogger.logError(error, { endpoint: 'send-buttons' });
         res.status(500).json({
             error: 'Failed to send button message',
             details: error.message
@@ -263,7 +260,7 @@ app.post('/wit/testing', async (req, res) => {
             });
         }
 
-        console.log(`Wit.ai testing request: "${message}"`);
+        await mongoLogger.info('Wit.ai testing request', { message });
 
         const result = await witService.processMessage(message, options);
 
@@ -271,8 +268,7 @@ app.post('/wit/testing', async (req, res) => {
         const entitiesArray = witService.extractEntities(result.data);
         const data = witService.getRequiredDataFromEntities(entitiesArray);
         const dimensions = witService.getDimensionsFromEntities(entitiesArray);
-        console.log(`Required Data:`, data);
-        console.log(`Dimensions:`, dimensions);
+        await mongoLogger.info('Wit.ai processing results', { requiredData: data, dimensions });
 
         res.json({
             success: true,
@@ -286,7 +282,7 @@ app.post('/wit/testing', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Wit.ai testing error:', error);
+        await mongoLogger.logError(error, { endpoint: 'wit-testing' });
         res.status(500).json({
             success: false,
             error: 'Failed to process message with Wit.ai',
@@ -310,7 +306,7 @@ app.get('/wit/status', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Wit.ai status error:', error);
+        await mongoLogger.logError(error, { endpoint: 'wit-status' });
         res.status(500).json({
             success: false,
             error: 'Failed to get Wit.ai status',
@@ -354,7 +350,7 @@ app.get('/analytics/webhooks', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        console.error('Analytics error:', error);
+        await mongoLogger.logError(error, { endpoint: 'analytics-webhooks' });
         res.status(500).json({
             error: 'Failed to get webhook analytics',
             details: error.message
@@ -380,7 +376,7 @@ app.get('/analytics/recent-calls', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        console.error('Recent calls error:', error);
+        await mongoLogger.logError(error, { endpoint: 'analytics-recent-calls' });
         res.status(500).json({
             error: 'Failed to get recent calls',
             details: error.message
@@ -389,8 +385,8 @@ app.get('/analytics/recent-calls', async (req, res) => {
 });
 
 // Error handling middleware
-app.use((error, req, res, next) => {
-    console.error('Unhandled error:', error);
+app.use(async (error, req, res, next) => {
+    await mongoLogger.logError(error, { source: 'unhandled-error' });
     res.status(500).json({
         error: 'Internal Server Error',
         message: error.message
@@ -398,26 +394,28 @@ app.use((error, req, res, next) => {
 });
 
 // For Vercel serverless deployment or local development
-console.log('Checking environment...');
-console.log('VERCEL env var:', process.env.VERCEL);
-console.log('NODE_ENV:', process.env.NODE_ENV);
+await mongoLogger.info('Environment check', { vercel: process.env.VERCEL, nodeEnv: process.env.NODE_ENV });
 
 if (!process.env.VERCEL) {
-    console.log('Starting local development server...');
+    await mongoLogger.info('Starting local development server...');
     // Start server for local development only
     const server = app.listen(PORT, () => {
-        console.log(`🚀 WhatsApp Message System running on port ${PORT}`);
-        console.log(`📱 Phone Number ID: ${process.env.WHATSAPP_PHONE_NUMBER_ID}`);
-        console.log(`🔗 API Version: ${process.env.WHATSAPP_VERSION}`);
-        console.log(`📋 Webhook URL: http://localhost:${PORT}/webhook`);
-        console.log(`💚 Health check: http://localhost:${PORT}/health`);
+        (async () => {
+            await mongoLogger.info('Server started successfully', {
+                port: PORT,
+                phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+                apiVersion: process.env.WHATSAPP_VERSION,
+                webhookUrl: `http://localhost:${PORT}/webhook`,
+                healthCheckUrl: `http://localhost:${PORT}/health`
+            });
+        })();
     });
 
-    server.on('error', (error) => {
-        console.error('Server error:', error);
+    server.on('error', async (error) => {
+        await mongoLogger.logError(error, { source: 'server-startup' });
     });
 } else {
-    console.log('Running in Vercel environment, skipping server startup');
+    await mongoLogger.info('Running in Vercel environment, skipping server startup');
 }
 
 export default app;

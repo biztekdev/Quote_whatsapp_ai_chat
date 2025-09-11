@@ -30,6 +30,7 @@ const materialSchema = new mongoose.Schema({
     },
     pricePerUnit: {
         type: Number,
+        required: true,
         default: 0,
         min: 0
     },
