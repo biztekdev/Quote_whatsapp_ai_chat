@@ -754,7 +754,6 @@ class DashboardApp {
             <tr>
                 <td>${product.name}</td>
                 <td>${product.categoryId?.name || 'N/A'}</td>
-                <td>${this.formatCurrency(product.basePrice || 0)}</td>
                 <td>
                     <small>
                         ${product.dimensionFields && product.dimensionFields.length > 0 
@@ -819,9 +818,6 @@ class DashboardApp {
             <tr>
                 <td>${material.name}</td>
                 <td>${material.categoryId?.name || 'N/A'}</td>
-                <td>${this.formatCurrency(material.pricePerUnit)}</td>
-                <td>${material.unit}</td>
-                <td>${material.thickness || 'N/A'}</td>
                 <td>
                     <span class="badge bg-${material.isActive ? 'success' : 'danger'}">
                         ${material.isActive ? 'Active' : 'Inactive'}
@@ -874,6 +870,7 @@ class DashboardApp {
         tbody.innerHTML = finishes.map(finish => `
             <tr>
                 <td>${finish.name}</td>
+                <td>${finish.attribute}</td>
                 <td>${finish.productCategoryId?.name || 'N/A'}</td>
                 <td>
                     <span class="badge bg-${finish.isActive ? 'success' : 'danger'}">
