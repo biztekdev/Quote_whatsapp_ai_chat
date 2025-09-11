@@ -166,20 +166,12 @@ Examples:
 ```
 product_finishes {
   _id: ObjectId (Primary Key)
+  erp_id: Number (required, unique, indexed)
   name: String (required)
-  categoryId: ObjectId (required, ref: 'FinishCategory')
   productCategoryId: ObjectId (required, ref: 'ProductCategory')
+  erp_product_category_id: Number (required, indexed)
   description: String
-  priceType: String (enum: ['fixed', 'percentage', 'per_unit'], default: 'fixed')
-  price: Number (required, min: 0)
-  unit: String (default: 'piece')
-  specifications: Array [
-    {
-      property: String
-      value: String
-    }
-  ]
-  processingTime: String (default: "Standard")
+  attribute: String
   isActive: Boolean (default: true)
   sortOrder: Number (default: 0)
   imageUrl: String
@@ -188,13 +180,19 @@ product_finishes {
 }
 
 Indexes:
-- categoryId + productCategoryId + isActive
+- erp_id (unique)
 - productCategoryId + isActive
+- erp_product_category_id
 - name
 
+Examples:
+- ERP ID: 1, White (Product Category ERP ID: 1)
+- ERP ID: 2, CMYK 4/0 (Product Category ERP ID: 1)
+- ERP ID: 3, CMYK 4/4 (Product Category ERP ID: 1)
+
 Relationships:
-- product_finishes.categoryId → finish_categories._id (Many-to-One)
 - product_finishes.productCategoryId → product_categories._id (Many-to-One)
+- product_finishes.erp_product_category_id → product_categories.erp_id (Many-to-One via ERP)
 ```
 
 ### 7. Quotes Collection

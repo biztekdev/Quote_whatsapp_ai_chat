@@ -27,16 +27,16 @@ const finishCategorySchema = new mongoose.Schema({
 
 // Product Finishes Schema
 const productFinishSchema = new mongoose.Schema({
+    erp_id: {
+        type: Number,
+        required: true,
+        unique: true,
+        index: true // Index for fast lookups by ERP ID
+    },
     name: {
         type: String,
         required: true,
         trim: true
-    },
-    categoryId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'FinishCategory',
-        required: true,
-        index: true
     },
     productCategoryId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -44,31 +44,18 @@ const productFinishSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    erp_product_category_id: {
+        type: Number,
+        required: true,
+        index: true // ERP product category reference
+    },
     description: {
         type: String,
         trim: true
     },
-    priceType: {
+    attribute: {
         type: String,
-        enum: ['fixed', 'percentage', 'per_unit'],
-        default: 'fixed'
-    },
-    price: {
-        type: Number,
-        required: true,
-        min: 0
-    },
-    unit: {
-        type: String,
-        default: 'piece' // for per_unit pricing
-    },
-    specifications: [{
-        property: String,
-        value: String
-    }],
-    processingTime: {
-        type: String, // e.g., "2-3 business days"
-        default: "Standard"
+        trim: true
     },
     isActive: {
         type: Boolean,
@@ -85,8 +72,9 @@ const productFinishSchema = new mongoose.Schema({
 });
 
 // Indexes for product finishes
-productFinishSchema.index({ categoryId: 1, productCategoryId: 1, isActive: 1 });
+productFinishSchema.index({ erp_id: 1 }); // ERP ID index
 productFinishSchema.index({ productCategoryId: 1, isActive: 1 });
+productFinishSchema.index({ erp_product_category_id: 1, isActive: 1 });
 productFinishSchema.index({ name: 1 });
 
 export const FinishCategory = mongoose.model('FinishCategory', finishCategorySchema);
