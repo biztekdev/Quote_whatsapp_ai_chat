@@ -8,6 +8,22 @@
     ],
     "routes": [
       {
+        "src": "/public/(.*)",
+        "dest": "/public/$1"
+      },
+      {
+        "src": "/dashboard.html",
+        "dest": "/public/dashboard.html"
+      },
+      {
+        "src": "/login.html",
+        "dest": "/public/login.html"
+      },
+      {
+        "src": "/(api|webhook)/(.*)",
+        "dest": "/$1/$2"
+      },
+      {
         "src": "/(.*)",
         "dest": "/"
       }
