@@ -611,6 +611,111 @@ router.get('/materials/:erpId', async (req, res) => {
 });
 
 /**
+ * GET /api/sync/finishes/active
+ * Get only active finishes
+ */
+router.get('/finishes/active', async (req, res) => {
+    try {
+        smartLogger.info('Getting active finishes');
+        console.log('Getting active finishes');
+        
+        const activeFinishes = await erpSyncService.getActiveFinishes();
+        
+        res.json({
+            success: true,
+            data: activeFinishes,
+            total: activeFinishes.length,
+            message: 'Active finishes retrieved',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        smartLogger.error('Error getting active finishes', { error: error.message });
+        console.error('Error getting active finishes:', error.message);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get active finishes',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * GET /api/sync/finishes/category/:categoryErpId
+ * Get finishes by product category ERP ID
+ */
+router.get('/finishes/category/:categoryErpId', async (req, res) => {
+    try {
+        const { categoryErpId } = req.params;
+        
+        smartLogger.info(`Getting finishes for product category ERP ID: ${categoryErpId}`);
+        console.log(`Getting finishes for product category ERP ID: ${categoryErpId}`);
+        
+        const finishes = await erpSyncService.getFinishesByProductCategoryErpId(categoryErpId);
+        
+        res.json({
+            success: true,
+            data: finishes,
+            total: finishes.length,
+            message: `Finishes retrieved for product category ERP ID: ${categoryErpId}`,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        smartLogger.error('Error getting finishes by product category', { error: error.message });
+        console.error('Error getting finishes by product category:', error.message);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get finishes by product category',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * GET /api/sync/finishes/:erpId
+ * Get finish by ERP ID
+ */
+router.get('/finishes/:erpId', async (req, res) => {
+    try {
+        const { erpId } = req.params;
+        
+        smartLogger.info(`Getting finish by ERP ID: ${erpId}`);
+        console.log(`Getting finish by ERP ID: ${erpId}`);
+        
+        const finish = await erpSyncService.findFinishByErpId(erpId);
+        
+        if (!finish) {
+            return res.status(404).json({
+                success: false,
+                error: 'Finish not found',
+                message: `No finish found with ERP ID: ${erpId}`,
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: finish,
+            message: `Finish retrieved by ERP ID: ${erpId}`,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        smartLogger.error('Error getting finish by ERP ID', { error: error.message });
+        console.error('Error getting finish by ERP ID:', error.message);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get finish by ERP ID',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
  * GET /api/sync/config
  * Get current sync configuration
  */

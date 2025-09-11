@@ -464,96 +464,100 @@ class ERPSyncService {
             smartLogger.info('Starting Finishes sync');
             console.log('Starting Finishes sync');
             
-            const erpData = await this.fetchFromERP('finishes');
+            const erpData = await this.fetchFromERP('api/sync/finishes');
             
             let created = 0;
             let updated = 0;
+            let inactivated = 0;
             let errors = 0;
 
+            // Step 1: Mark all existing finishes as inactive
+            console.log('Marking all existing finishes as inactive...');
+            const inactivateResult = await ProductFinish.updateMany(
+                {}, // All documents
+                { isActive: false }
+            );
+            inactivated = inactivateResult.modifiedCount;
+            console.log(`Marked ${inactivated} existing finishes as inactive`);
+
+            // Step 2: Process finishes from ERP data
             for (const erpFinish of erpData) {
                 try {
-                    // Find finish category by name
-                    let finishCategory = await FinishCategory.findOne({ 
-                        name: erpFinish.finish_category || erpFinish.category 
-                    });
-
-                    if (!finishCategory) {
-                        // Create finish category if it doesn't exist
-                        finishCategory = await FinishCategory.create({
-                            name: erpFinish.finish_category || erpFinish.category,
-                            description: `Auto-created from ERP sync`,
-                            isActive: true,
-                            sortOrder: 0
-                        });
-                        smartLogger.info(`Created finish category: ${finishCategory.name}`);
-                        console.log(`Created finish category: ${finishCategory.name}`);
-                    }
-
-                    // Find product category by name
+                    // Find product category by ERP ID
                     const productCategory = await ProductCategory.findOne({ 
-                        name: erpFinish.product_category || erpFinish.product_category_name 
+                        erp_id: parseInt(erpFinish.product_category_id),
+                        isActive: true
                     });
 
                     if (!productCategory) {
-                        smartLogger.warn(`Product category not found for finish: ${erpFinish.name}`);
-                        console.warn(`Product category not found for finish: ${erpFinish.name}`);
+                        smartLogger.warn(`Product category not found for finish: ${erpFinish.name} (ERP Category ID: ${erpFinish.product_category_id})`);
+                        console.warn(`Product category not found for finish: ${erpFinish.name} (ERP Category ID: ${erpFinish.product_category_id})`);
                         errors++;
                         continue;
                     }
 
                     // Map ERP data to our model structure
                     const finishData = {
-                        name: erpFinish.name || erpFinish.finish_name,
-                        categoryId: finishCategory._id,
+                        erp_id: parseInt(erpFinish.id),
+                        name: erpFinish.name,
                         productCategoryId: productCategory._id,
+                        erp_product_category_id: parseInt(erpFinish.product_category_id),
                         description: erpFinish.description || '',
-                        priceType: erpFinish.price_type || 'fixed',
-                        price: parseFloat(erpFinish.price || 0),
-                        unit: erpFinish.unit || 'piece',
-                        specifications: erpFinish.specifications || [],
-                        processingTime: erpFinish.processing_time || 'Standard',
-                        isActive: erpFinish.is_active !== undefined ? erpFinish.is_active : true,
-                        sortOrder: erpFinish.sort_order || 0,
+                        attribute: erpFinish.attribute || '',
+                        isActive: true, // Always set new/updated records as active
+                        sortOrder: parseInt(erpFinish.sort_order || erpFinish.id || 0),
                         imageUrl: erpFinish.image_url || erpFinish.imageUrl || ''
                     };
 
-                    // Check if finish exists
+                    // Check if finish exists by erp_id (primary match) or name (fallback)
                     const existingFinish = await ProductFinish.findOne({ 
-                        name: finishData.name,
-                        categoryId: finishCategory._id,
-                        productCategoryId: productCategory._id
+                        $or: [
+                            { erp_id: finishData.erp_id },
+                            { name: finishData.name, productCategoryId: productCategory._id }
+                        ]
                     });
 
                     if (existingFinish) {
-                        // Update existing finish
+                        // Update existing finish and reactivate it
                         await ProductFinish.findByIdAndUpdate(
                             existingFinish._id,
                             finishData,
                             { new: true }
                         );
                         updated++;
-                        smartLogger.debug(`Updated finish: ${finishData.name}`);
-                        console.log(`Updated finish: ${finishData.name}`);
+                        smartLogger.debug(`Updated and reactivated finish: ${finishData.name} (ERP ID: ${finishData.erp_id})`);
+                        console.log(`Updated and reactivated finish: ${finishData.name} (ERP ID: ${finishData.erp_id}, Product Category: ${productCategory.name})`);
                     } else {
                         // Create new finish
                         await ProductFinish.create(finishData);
                         created++;
-                        smartLogger.debug(`Created finish: ${finishData.name}`);
-                        console.log(`Created finish: ${finishData.name}`);
+                        smartLogger.debug(`Created new finish: ${finishData.name} (ERP ID: ${finishData.erp_id})`);
+                        console.log(`Created new finish: ${finishData.name} (ERP ID: ${finishData.erp_id}, Product Category: ${productCategory.name})`);
                     }
+                    
                 } catch (itemError) {
                     errors++;
-                    smartLogger.error(`Error processing finish: ${erpFinish.name}`, { error: itemError.message });
-                    console.error(`Error processing finish: ${erpFinish.name}`, itemError.message);
+                    smartLogger.error(`Error processing finish: ${erpFinish.name} (ID: ${erpFinish.id})`, { error: itemError.message });
+                    console.error(`Error processing finish: ${erpFinish.name} (ID: ${erpFinish.id})`, itemError.message);
                 }
             }
+
+            // Step 3: Count final statistics
+            const totalActive = await ProductFinish.countDocuments({ isActive: true });
+            const totalInactive = await ProductFinish.countDocuments({ isActive: false });
 
             const result = {
                 table: 'finishes',
                 total: erpData.length,
                 created,
                 updated,
+                inactivated,
                 errors,
+                finalCounts: {
+                    active: totalActive,
+                    inactive: totalInactive,
+                    total: totalActive + totalInactive
+                },
                 timestamp: new Date().toISOString()
             };
 
@@ -690,7 +694,8 @@ class ERPSyncService {
      */
     async findProductByErpId(erpId) {
         try {
-            return await Product.findOne({ erp_id: parseInt(erpId) }).populate('categoryId');
+            return await Product.findOne({ erp_id: parseInt(erpId) })
+                .populate('categoryId');
         } catch (error) {
             smartLogger.error('Error finding product by ERP ID', { error: error.message, erpId });
             console.error('Error finding product by ERP ID:', error.message, 'ERP ID:', erpId);
@@ -777,6 +782,56 @@ class ERPSyncService {
         } catch (error) {
             smartLogger.error('Error getting materials by category ERP ID', { error: error.message, categoryErpId });
             console.error('Error getting materials by category ERP ID:', error.message, 'Category ERP ID:', categoryErpId);
+            throw error;
+        }
+    }
+
+    /**
+     * Find finish by ERP ID
+     * @param {number} erpId - ERP ID to search for
+     * @returns {Promise<Object|null>} - Finish object or null
+     */
+    async findFinishByErpId(erpId) {
+        try {
+            return await ProductFinish.findOne({ erp_id: parseInt(erpId) })
+                .populate('productCategoryId');
+        } catch (error) {
+            smartLogger.error('Error finding finish by ERP ID', { error: error.message, erpId });
+            console.error('Error finding finish by ERP ID:', error.message, 'ERP ID:', erpId);
+            throw error;
+        }
+    }
+
+    /**
+     * Get only active finishes
+     * @returns {Promise<Array>} - Array of active finishes
+     */
+    async getActiveFinishes() {
+        try {
+            return await ProductFinish.find({ isActive: true })
+                .populate('productCategoryId')
+                .sort({ sortOrder: 1, name: 1 });
+        } catch (error) {
+            smartLogger.error('Error getting active finishes', { error: error.message });
+            console.error('Error getting active finishes:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Get finishes by product category ERP ID
+     * @param {number} categoryErpId - Product Category ERP ID
+     * @returns {Promise<Array>} - Array of finishes for product category
+     */
+    async getFinishesByProductCategoryErpId(categoryErpId) {
+        try {
+            return await ProductFinish.find({ 
+                erp_product_category_id: parseInt(categoryErpId),
+                isActive: true 
+            }).populate('productCategoryId').sort({ sortOrder: 1, name: 1 });
+        } catch (error) {
+            smartLogger.error('Error getting finishes by product category ERP ID', { error: error.message, categoryErpId });
+            console.error('Error getting finishes by product category ERP ID:', error.message, 'Category ERP ID:', categoryErpId);
             throw error;
         }
     }
