@@ -26,23 +26,23 @@ import erpSyncRoutes from './api/erpSyncRoutes.js';
 // Load environment variables
 dotenv.config();
 
-await mongoLogger.info('Environment loaded, starting server...');
+// await mongoLogger.info('Environment loaded, starting server...');
 
 // Initialize database connection
 let dbConnected = false;
 try {
     await connectDB();
     dbConnected = true;
-    await mongoLogger.info('Database connected successfully');
+    // await mongoLogger.info('Database connected successfully');
 } catch (error) {
-    await mongoLogger.warn('Database connection failed, continuing without MongoDB', { error: error.message });
-    await mongoLogger.info('To enable database features, please configure MONGODB_URI in .env');
+    // await mongoLogger.warn('Database connection failed, continuing without MongoDB', { error: error.message });
+    // await mongoLogger.info('To enable database features, please configure MONGODB_URI in .env');
 }
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-await mongoLogger.info('Port configuration', { port: PORT });
+// await mongoLogger.info('Port configuration', { port: PORT });
 
 // Middleware
 app.use(cors());
@@ -50,16 +50,16 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Initialize services
-await mongoLogger.info('Initializing WhatsApp service...');
+// await mongoLogger.info('Initializing WhatsApp service...');
 const whatsappService = new WhatsAppService();
 
-await mongoLogger.info('Initializing WitService...');
+// await mongoLogger.info('Initializing WitService...');
 const witService = new WitService();
 
-await mongoLogger.info('Initializing message handler...');
+// await mongoLogger.info('Initializing message handler...');
 const messageHandler = new MessageHandler(whatsappService, witService.client);
 
-await mongoLogger.info('Services initialized successfully!');
+// await mongoLogger.info('Services initialized successfully!');
 
 // Routes
 app.get('/', (req, res) => {
@@ -143,46 +143,76 @@ app.get('/test-files', (req, res) => {
 
 // WhatsApp webhook verification
 app.get("/webhook", async (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-    await mongoLogger.info('Webhook verification', { challenge, query: req.query, body: req.body });
-    
-    if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBICtBCYTLui") {
-        return res.status(200).send(challenge);
+    try {
+        const mode = req.query["hub.mode"];
+        const token = req.query["hub.verify_token"];
+        const challenge = req.query["hub.challenge"];
+        
+        await mongoLogger.info('Webhook verification', { 
+            mode, 
+            token: token ? '***' : 'missing', 
+            challenge, 
+            query: req.query 
+        });
+        
+        if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBICtBCYTLui") {
+            await mongoLogger.info('Webhook verification successful');
+            return res.status(200).send(challenge);
+        }
+        
+        await mongoLogger.warn('Webhook verification failed', { mode, hasToken: !!token });
+        return res.sendStatus(403);
+        
+    } catch (error) {
+        await mongoLogger.logError(error, { endpoint: 'webhook-verification' });
+        return res.sendStatus(403);
     }
-    return res.sendStatus(403);
-});
-
-app.get("/webhook2", async (req, res) => {
-    // const mode = req.query["hub.mode"];
-    // const token = req.query["hub.verify_token"];
-    // const challenge = req.query["hub.challenge"];
-    await mongoLogger.info('Webhook verification (webhook2)', { query: req.query, body: req.body });
-
-    // if (mode === "subscribe" && token === "RfNsagTqlBrcnLpCyyMQRBlCtBCYTLui") {
-    //     return res.status(200).send(challenge);
-    // }
-    return res.sendStatus(200);
 });
 
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     let processingResult = {};
-    await mongoLogger.logWebhook(req.body, 'webhook');
-    const message = req.body;
-    const result = await messageHandler.handleIncomingMessage(message);
+    
+    try {
+        // Force refresh connection status before logging webhook
+        await mongoLogger.refreshConnection();
+        await mongoLogger.logWebhook(req.body, 'webhook');
+        
+        const message = req.body;
+        const result = await messageHandler.handleIncomingMessage(message);
+        
+        const processingTime = Date.now() - startTime;
+        await mongoLogger.info('Webhook processed', { 
+            processingTime: `${processingTime}ms`,
+            messageId: message?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id,
+            from: message?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from
+        });
 
-    const processingTime = Date.now() - startTime;
-    await mongoLogger.info('Webhook processed', { processingTime: `${processingTime}ms` });
+        res.status(200).json({
+            status: 'ok',
+            processingTime: `${processingTime}ms`,
+            timestamp: new Date().toISOString()
+        });
 
-    res.status(200).json({
-        status: 'ok',
-        processingTime: `${processingTime}ms`,
-        timestamp: new Date().toISOString()
-    });
-
+    } catch (error) {
+        const processingTime = Date.now() - startTime;
+        
+        // Log the error
+        await mongoLogger.logError(error, { 
+            endpoint: 'webhook',
+            processingTime: `${processingTime}ms`,
+            requestBody: req.body
+        });
+        
+        // Still respond with 200 to WhatsApp to avoid retries
+        res.status(200).json({
+            status: 'error',
+            error: error.message,
+            processingTime: `${processingTime}ms`,
+            timestamp: new Date().toISOString()
+        });
+    }
 });
 
 // API Routes for sending messages
@@ -436,20 +466,20 @@ app.use(async (error, req, res, next) => {
 });
 
 // For Vercel serverless deployment or local development
-await mongoLogger.info('Environment check', { vercel: process.env.VERCEL, nodeEnv: process.env.NODE_ENV });
+// await mongoLogger.info('Environment check', { vercel: process.env.VERCEL, nodeEnv: process.env.NODE_ENV });
 
 if (!process.env.VERCEL) {
-    await mongoLogger.info('Starting local development server...');
+    // await mongoLogger.info('Starting local development server...');
     // Start server for local development only
     const server = app.listen(PORT, () => {
         (async () => {
-            await mongoLogger.info('Server started successfully', {
-                port: PORT,
-                phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
-                apiVersion: process.env.WHATSAPP_VERSION,
-                webhookUrl: `http://localhost:${PORT}/webhook`,
-                healthCheckUrl: `http://localhost:${PORT}/health`
-            });
+            // await mongoLogger.info('Server started successfully', {
+            //     port: PORT,
+            //     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+            //     apiVersion: process.env.WHATSAPP_VERSION,
+            //     webhookUrl: `http://localhost:${PORT}/webhook`,
+            //     healthCheckUrl: `http://localhost:${PORT}/health`
+            // });
         })();
     });
 
