@@ -870,8 +870,8 @@ class DashboardApp {
         tbody.innerHTML = finishes.map(finish => `
             <tr>
                 <td>${finish.name}</td>
-                <td>${finish.attribute}</td>
                 <td>${finish.productCategoryId?.name || 'N/A'}</td>
+                <td>${finish.attribute}</td>
                 <td>
                     <span class="badge bg-${finish.isActive ? 'success' : 'danger'}">
                         ${finish.isActive ? 'Active' : 'Inactive'}
