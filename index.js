@@ -20,8 +20,7 @@ import logRoutes from './api/logRoutes.js';
 import authRoutes from './api/authRoutes.js';
 import { authenticateToken } from './middleware/auth.js';
 import erpSyncRoutes from './api/erpSyncRoutes.js';
-
-
+import cronManager from './cron/index.js';
 
 // Load environment variables
 dotenv.config();
@@ -60,6 +59,18 @@ const witService = new WitService();
 const messageHandler = new MessageHandler(whatsappService, witService.client);
 
 // await mongoLogger.info('Services initialized successfully!');
+
+// Initialize cron jobs
+if (dbConnected) {
+    try {
+        cronManager.start();
+        await mongoLogger.info('Cron jobs started successfully');
+    } catch (error) {
+        await mongoLogger.error('Failed to start cron jobs:', error);
+    }
+} else {
+    await mongoLogger.warn('Cron jobs not started - database not connected');
+}
 
 // Routes
 app.get('/', (req, res) => {
@@ -428,6 +439,56 @@ app.get('/health', (req, res) => {
             version: process.env.WHATSAPP_VERSION
         }
     });
+});
+
+// Cron jobs status endpoint
+app.get('/cron/status', (req, res) => {
+    try {
+        const status = cronManager.getStatus();
+        res.json({
+            success: true,
+            cronJobs: status,
+            isRunning: cronManager.isRunning,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get cron status',
+            details: error.message
+        });
+    }
+});
+
+// Manual cron job execution endpoint (for testing)
+app.post('/cron/execute/:jobName', async (req, res) => {
+    try {
+        const { jobName } = req.params;
+        const { cleanupLegacyConversations } = await import('./cron/jobs/cleanupJobs.js');
+        
+        if (jobName === 'cleanup-legacy-conversations') {
+            const result = await cleanupLegacyConversations();
+            res.json({
+                success: true,
+                jobName,
+                result,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(404).json({
+                success: false,
+                error: 'Job not found',
+                availableJobs: ['cleanup-legacy-conversations']
+            });
+        }
+    } catch (error) {
+        await mongoLogger.logError(error, { endpoint: 'cron-execute' });
+        res.status(500).json({
+            success: false,
+            error: 'Failed to execute cron job',
+            details: error.message
+        });
+    }
 });
 
 // Database Analytics Routes (only if database is connected)

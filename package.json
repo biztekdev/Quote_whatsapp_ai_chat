@@ -9,6 +9,7 @@
     "dev": "nodemon",
     "dev:debug": "nodemon --inspect",
     "test": "node test.js",
+    "test:cron": "node test-cron.js",
     "seed": "node seedDatabase.js",
     "seed:clear": "node -e \"import('./services/databaseSeeder.js').then(({DatabaseSeeder})=>{import('./config/database.js').then(db=>{db.default.connect().then(()=>{DatabaseSeeder.clearAllData().then(()=>{console.log('✅ Data cleared');process.exit(0);})})})})\"",
     "lint": "echo 'No linter configured'",
@@ -35,6 +36,7 @@
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.8.7",
+    "node-cron": "^4.2.1",
     "node-wit": "^6.6.0"
   },
   "devDependencies": {
