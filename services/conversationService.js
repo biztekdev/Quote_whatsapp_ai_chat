@@ -17,7 +17,10 @@ class ConversationService {
                 isActive: true 
             });
 
+            
+            console.log('state found', state);
             if (!state) {
+                console.log('No state found for phone', phone);
                 state = new LegacyConversationState({
                     phone,
                     currentStep: 'start',

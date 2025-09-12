@@ -64,8 +64,9 @@ class MessageHandler {
 
             // Get current conversation state
             const conversationState = await conversationService.getConversationState(from);
+            console.log('conversationState', conversationState);
             
-        await mongoLogger.info('Conversation state retrieved', { conversationState });
+        // await mongoLogger.info('Conversation state retrieved', { conversationState });
             
             // Process message through our conversation flow
             await this.processConversationFlow(messageText, from, conversationState);
