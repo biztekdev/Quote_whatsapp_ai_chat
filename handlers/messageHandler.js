@@ -66,8 +66,36 @@ class MessageHandler {
             const conversationState = await conversationService.getConversationState(from);
             console.log('conversationState', conversationState);
             
-        // await mongoLogger.info('Conversation state retrieved', { conversationState });
+            // Process message with Wit.ai first
+            const witResponse = await this.witService.processMessage(messageText);
+            const entities = this.witService.extractEntities(witResponse.data);
             
+            await mongoLogger.info('Wit.ai response', { 
+                entities: entities,
+                messageText: messageText 
+            });
+
+            // Extract and update conversation data with entities
+            const updatedConversationData = await this.extractAndUpdateConversationData(
+                entities, 
+                conversationState.conversationData || {}
+            );
+
+            // Check if we can bypass steps based on extracted data
+            const nextStep = await this.determineNextStep(
+                conversationState.currentStep, 
+                updatedConversationData, 
+                entities
+            );
+
+            // Update conversation state with extracted data
+            if (Object.keys(updatedConversationData).length > 0) {
+                await conversationService.updateConversationState(from, {
+                    conversationData: updatedConversationData,
+                    currentStep: nextStep
+                });
+            }
+
             // Process message through our conversation flow
             await this.processConversationFlow(messageText, from, conversationState);
             
@@ -78,6 +106,149 @@ class MessageHandler {
                 "Sorry, I encountered an error processing your message. Please try again."
             );
         }
+    }
+
+    /**
+     * Extract entities from Wit.ai response and update conversation data
+     */
+    async extractAndUpdateConversationData(entities, currentConversationData) {
+        const updatedData = { ...currentConversationData };
+
+        for (const entity of entities) {
+            console.log("entity....... ", entity);
+            const { entity: entityName, value, confidence } = entity;
+            
+            switch (entityName) {
+                case 'category:category':
+                    if (value && confidence > 0.5) {
+                        // Search for category in ProductCategory schema
+                        const foundCategory = await this.findCategoryByName(value);
+                        if (foundCategory) {
+                            updatedData.selectedCategory = {
+                                id: foundCategory._id.toString(),
+                                erp_id: foundCategory.erp_id,
+                                name: foundCategory.name,
+                                description: foundCategory.description
+                            };
+                        } else {
+                            updatedData.requestedCategory = value;
+                        }
+                    }
+                    break;
+                case 'dimensions:dimensions':
+                    if (value && confidence > 0.5) {
+                        if (!updatedData.dimensions) {
+                            updatedData.dimensions = [];
+                        }
+                        // Add dimension if not already present
+                        const existingDimension = updatedData.dimensions.find(d => d.name === value.name);
+                        if (!existingDimension) {
+                            updatedData.dimensions.push({
+                                name: value.name,
+                                value: value.value
+                            });
+                        }
+                    }
+                    break;
+                case 'quantity':
+                    if (value && confidence > 0.5) {
+                        updatedData.quantity = parseInt(value);
+                    }
+                    break;
+                case 'material':
+                    if (value && confidence > 0.5) {
+                        updatedData.selectedMaterial = value;
+                    }
+                    break;
+                case 'finish':
+                    if (value && confidence > 0.5) {
+                        updatedData.selectedFinish = value;
+                    }
+                    break;
+                case 'category':
+                    if (value && confidence > 0.5) {
+                        updatedData.requestedCategory = value;
+                    }
+                    break;
+            }
+        }
+
+        return updatedData;
+    }
+
+    /**
+     * Find category by name in ProductCategory schema
+     */
+    async findCategoryByName(categoryName) {
+        try {
+            const categories = await conversationService.getProductCategories();
+            
+            // Search in name field
+            let foundCategory = categories.find(cat => 
+                cat.name.toLowerCase().includes(categoryName.toLowerCase())
+            );
+            
+            // If not found in name, search in sub_names
+            if (!foundCategory) {
+                foundCategory = categories.find(cat => 
+                    cat.sub_names && cat.sub_names.some(subName => 
+                        subName.toLowerCase().includes(categoryName.toLowerCase())
+                    )
+                );
+            }
+            
+            return foundCategory;
+        } catch (error) {
+            console.error('Error finding category by name:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Determine the next step based on current step and extracted data
+     */
+    async determineNextStep(currentStep, conversationData, entities) {
+        // If we have a selected category and product name, move to dimension_input
+        if (conversationData.selectedCategory && conversationData.requestedProductName) {
+            return 'dimension_input';
+        }
+
+        // If we're in product_selection and have product name, move to dimension_input
+        if (currentStep === 'product_selection' && conversationData.requestedProductName) {
+            return 'dimension_input';
+        }
+
+        // If we're in dimension_input and have dimensions, move to material_selection
+        if (currentStep === 'dimension_input' && conversationData.dimensions && conversationData.dimensions.length > 0) {
+            return 'material_selection';
+        }
+
+        // If we're in material_selection and have material, move to finish_selection
+        if (currentStep === 'material_selection' && conversationData.selectedMaterial) {
+            return 'finish_selection';
+        }
+
+        // If we're in finish_selection and have finish, move to quantity_input
+        if (currentStep === 'finish_selection' && conversationData.selectedFinish) {
+            return 'quantity_input';
+        }
+
+        // If we're in quantity_input and have quantity, move to quote_generation
+        if (currentStep === 'quantity_input' && conversationData.quantity) {
+            return 'quote_generation';
+        }
+
+        // If we have all required data, move to quote_generation
+        if (conversationData.selectedProduct && 
+            conversationData.dimensions && 
+            conversationData.dimensions.length > 0 && 
+            conversationData.selectedMaterial && 
+            conversationData.selectedFinish && 
+            conversationData.quantity) {
+            return 'quote_generation';
+        }
+
+        return currentStep; // Keep current step if no advancement possible
     }
 
     async processConversationFlow(messageText, from, conversationState) {
@@ -93,6 +264,9 @@ class MessageHandler {
                     break;
                 case 'greeting_response':
                     await this.handleGreetingResponse(messageText, from);
+                    break;
+                case 'category_selection':
+                    await this.handleCategorySelection(messageText, from);
                     break;
                 case 'product_selection':
                     await this.handleProductSelection(messageText, from);
@@ -137,6 +311,9 @@ class MessageHandler {
                 from,
                 "Hello! 👋 Welcome to our mylar bag service. Please say 'Hi' to get started with your quote request."
             );
+            await conversationService.updateConversationState(from, {
+                currentStep: 'greeting_response'
+            });
         }
     }
 
@@ -169,13 +346,14 @@ Would you like to get a quote for mylar bags today?`;
 
     async handleGreetingResponse(messageText, from) {
         const response = messageText.toLowerCase().trim();
+        console.log('Message response ', response);
         
         if (response.includes('yes') || response === 'quote_yes' || response.includes('get quote')) {
             await conversationService.updateConversationState(from, {
-                currentStep: 'product_selection',
+                currentStep: 'category_selection',
                 'conversationData.wantsQuote': true
             });
-            await this.sendProductSelection(from);
+            await this.sendCategorySelection(from);
         } else if (response.includes('no') || response === 'quote_no') {
             await this.whatsappService.sendMessage(
                 from,
@@ -194,73 +372,216 @@ Would you like to get a quote for mylar bags today?`;
         }
     }
 
-    async sendProductSelection(from) {
-        const products = await conversationService.getMylarBagProducts();
-        
-        const sections = [{
-            title: "Available Products",
-            rows: products.map(product => ({
-                id: product.id,
-                title: product.name,
-                description: product.description
-            }))
-        }];
+    async sendCategorySelection(from) {
+        try {
+            const categories = await conversationService.getProductCategories();
+            
+            if (!categories || categories.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no product categories are available at the moment. Please try again later."
+                );
+                return;
+            }
 
-        const bodyText = `Great! 📦 Here are our available mylar bag products. Please select the type you're interested in:`;
-        
-        await this.whatsappService.sendListMessage(
-            from, 
-            bodyText, 
-            "Select Product", 
-            sections
-        );
+            const sections = [{
+                title: "Product Categories",
+                rows: categories.map(category => ({
+                    id: category.erp_id.toString(),
+                    title: category.name,
+                    description: category.description
+                }))
+            }];
+
+            const bodyText = `Perfect! 🎯 Let's start by selecting the category that best fits your needs. Which category are you interested in?`;
+            console.log('sections ', sections);
+            await this.whatsappService.sendListMessage(
+                from, 
+                bodyText, 
+                "Select Category", 
+                sections
+            );
+        } catch (error) {
+            await mongoLogger.logError(error, { source: 'send-category-selection' });
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I encountered an error loading categories. Please try again later."
+            );
+        }
+    }
+
+    async handleCategorySelection(messageText, from) {
+        // try {
+            const categories = await conversationService.getProductCategories();
+            
+            if (!categories || categories.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no product categories are available at the moment. Please try again later."
+                );
+                return;
+            }
+
+            let selectedCategory = null;
+
+            // Check if it's a direct category ERP ID or find by name
+            selectedCategory = categories.find(c => 
+                c.erp_id.toString() === messageText || 
+                c.name.toLowerCase().includes(messageText.toLowerCase())
+            );
+            console.log('Selected category ', selectedCategory);
+
+            if (selectedCategory) {
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'product_selection',
+                    'conversationData.selectedCategory': {
+                        id: selectedCategory._id,
+                        erp_id: selectedCategory.erp_id,
+                        name: selectedCategory.name,
+                        description: selectedCategory.description
+                    }
+                });
+
+                await this.sendProductSelection(from);
+            } else {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "I didn't quite catch that. Please select a category from the list above or type the category name."
+                );
+            }
+        // } catch (error) {
+        //     await mongoLogger.logError(error, { source: 'handle-category-selection' });
+        //     await this.whatsappService.sendMessage(
+        //         from,
+        //         "Sorry, I encountered an error processing your category selection. Please try again."
+        //     );
+        // }
+    }
+
+    async sendProductSelection(from) {
+        // try {
+            // Get conversation state to access selected category
+            const conversationState = await conversationService.getConversationState(from);
+            const selectedCategory = conversationState.conversationData?.selectedCategory;
+            console.log('Selected category ', selectedCategory);
+            
+            if (!selectedCategory || !selectedCategory.id) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+                );
+                return;
+            }
+
+            // Get products by category ID to validate against
+            const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
+            
+            if (!allProducts || allProducts.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    `Sorry, no products are available in the ${selectedCategory.name} category at the moment. Please try another category.`
+                );
+                return;
+            }
+
+            const bodyText = `Great! 📦 You've selected the ${selectedCategory.name} category.
+
+What is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
+            
+            await this.whatsappService.sendMessage(from, bodyText);
+        // } catch (error) {
+        //     await mongoLogger.logError(error, { source: 'send-product-selection' });
+        //     await this.whatsappService.sendMessage(
+        //         from,
+        //         "Sorry, I encountered an error loading products. Please try again later."
+        //     );
+        // }
     }
 
     async handleProductSelection(messageText, from) {
-        const products = await conversationService.getMylarBagProducts();
-        let selectedProduct = null;
+        try {
+            // Get conversation state to access selected category
+            const conversationState = await conversationService.getConversationState(from);
+            const selectedCategory = conversationState.conversationData?.selectedCategory;
+            const requestedProductName = conversationState.conversationData?.requestedProductName;
+            
+            if (!selectedCategory || !selectedCategory.id) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+                );
+                return;
+            }
 
-        // Check if it's a direct product ID or find by name
-        selectedProduct = products.find(p => 
-            p.id === messageText || 
-            p.name.toLowerCase().includes(messageText.toLowerCase())
-        );
+            // Get products by category ID
+            const products = await conversationService.getProductsByCategory(selectedCategory.id);
+            let selectedProduct = null;
 
-        if (selectedProduct) {
-            await conversationService.updateConversationState(from, {
-                currentStep: 'dimension_input',
-                'conversationData.selectedProduct': {
-                    id: selectedProduct.id,
-                    name: selectedProduct.name,
-                    dimensionNames: selectedProduct.dimensionNames,
-                    availableMaterials: selectedProduct.availableMaterials.map(m => m.name),
-                    availableFinishes: selectedProduct.availableFinishes.map(f => f.name)
+            // Use requested product name from Wit.ai if available, otherwise use messageText
+            const searchTerm = requestedProductName || messageText;
+
+            // Check if it's a direct product ERP ID or find by name
+            selectedProduct = products.find(p => 
+                p.erp_id.toString() === searchTerm || 
+                p.name.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            if (selectedProduct) {
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'dimension_input',
+                    'conversationData.selectedProduct': {
+                        id: selectedProduct.erp_id.toString(),
+                        erp_id: selectedProduct.erp_id,
+                        name: selectedProduct.name,
+                        description: selectedProduct.description,
+                        basePrice: selectedProduct.basePrice,
+                        dimensionFields: selectedProduct.dimensionFields
+                    }
+                });
+
+                // Check if dimensions are already provided from Wit.ai
+                const conversationData = conversationState.conversationData || {};
+                if (conversationData.dimensions && conversationData.dimensions.length > 0) {
+                    // Skip dimension input and go to material selection
+                    await conversationService.updateConversationState(from, {
+                        currentStep: 'material_selection'
+                    });
+                    await this.sendMaterialSelection(from, selectedProduct);
+                } else {
+                    await this.sendDimensionRequest(from, selectedProduct);
                 }
-            });
-
-            await this.sendDimensionRequest(from, selectedProduct);
-        } else {
+            } else {
+                await this.whatsappService.sendMessage(
+                    from,
+                    `I couldn't find a product named "${searchTerm}" in the ${selectedCategory.name} category. Please try a different product name or check the spelling.`
+                );
+            }
+        } catch (error) {
+            await mongoLogger.logError(error, { source: 'handle-product-selection' });
             await this.whatsappService.sendMessage(
                 from,
-                "Please select a valid product from the list above. You can tap on one of the options or type the product name."
+                "Sorry, I encountered an error processing your product selection. Please try again."
             );
         }
     }
 
     async sendDimensionRequest(from, product) {
-        const dimensionNames = product.dimensionNames.join(', ');
+        const dimensionFields = product.dimensionFields || [];
+        const dimensionNames = dimensionFields.map(field => field.name).join(', ');
+        const dimensionUnits = dimensionFields.map(field => field.unit || 'inches').join(', ');
+        
         const message = `Perfect! You selected: *${product.name}* 📏
 
-Now I need the dimensions for your mylar bags.
+Now I need the dimensions for your product.
 
 Required dimensions: *${dimensionNames}*
 
 Please provide dimensions in one of these formats:
-• ${product.dimensionNames.join(' x ')} (e.g., "10 x 8 x 3")
+• ${dimensionFields.map(field => field.name).join(' x ')} (e.g., "10 x 8 x 3")
 • Separated by commas (e.g., "10, 8, 3")
 • With labels (e.g., "L:10, W:8, H:3")
 
-All dimensions should be in inches.`;
+All dimensions should be in ${dimensionUnits}.`;
 
         await this.whatsappService.sendMessage(from, message);
     }

@@ -16,7 +16,7 @@ class CronManager {
             await mongoLogger.info('🕐 Initializing cron jobs...');
             
             // Register only the inactive conversation state cleanup job
-            this.registerJob('cleanup-legacy-conversations', '* * * * *', cleanupLegacyConversations);
+            this.registerJob('cleanup-legacy-conversations', '*/3 * * * *', cleanupLegacyConversations);
             
             this.isRunning = true;
             await mongoLogger.info('✅ Cron job initialized successfully - only inactive conversation state cleanup');

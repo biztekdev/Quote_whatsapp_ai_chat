@@ -7,7 +7,7 @@ class WhatsAppDiagnostic {
     constructor() {
         this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
         this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-        this.version = process.env.WHATSAPP_VERSION || 'v22.0';
+        this.version = process.env.WHATSAPP_VERSION || 'v23.0';
         this.baseURL = `https://graph.facebook.com/${this.version}/${this.phoneNumberId}`;
     }
 

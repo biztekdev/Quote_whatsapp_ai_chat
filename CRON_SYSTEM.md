@@ -82,26 +82,31 @@ export const CRON_SCHEDULES = {
 ### 1. Legacy Conversation Cleanup
 
 **Job Name**: `cleanup-legacy-conversations`  
-**Schedule**: Every 5 minutes (`*/5 * * * *`)  
-**Purpose**: Removes inactive conversation states older than 10 minutes
+**Schedule**: Every minute (`* * * * *`)  
+**Purpose**: Updates conversation states older than 10 minutes to set isActive: false
 
 **Function**: `cleanupLegacyConversations()`
 
 **What it does**:
-- Finds `LegacyConversationState` documents where `isActive: false`
-- Deletes documents where `createdAt` is older than 10 minutes
-- Logs the number of deleted documents
+- Finds `LegacyConversationState` documents where `isActive: true` and `createdAt` is older than 10 minutes
+- Updates these documents to set `isActive: false` and `updatedAt: current timestamp`
+- Logs the number of updated documents
 - Returns execution statistics
 
 **Database Query**:
 ```javascript
-await LegacyConversationState.deleteMany({
-    isActive: false,
+await LegacyConversationState.updateMany({
+    isActive: true, // Only update active conversations
     createdAt: { $lt: tenMinutesAgo }
+}, {
+    $set: { 
+        isActive: false,
+        updatedAt: new Date()
+    }
 });
 ```
 
-### 2. Custom Cleanup
+### 2. Custom Update
 
 **Function**: `cleanupLegacyConversationsCustom(minutesOld)`
 
@@ -110,7 +115,7 @@ await LegacyConversationState.deleteMany({
 
 **Usage**:
 ```javascript
-// Clean up conversations older than 30 minutes
+// Update conversations older than 30 minutes to inactive
 await cleanupLegacyConversationsCustom(30);
 ```
 

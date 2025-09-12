@@ -1,11 +1,11 @@
 export const config = {
     whatsapp: {
-        version: process.env.WHATSAPP_VERSION || 'v22.0',
+        version: process.env.WHATSAPP_VERSION || 'v23.0',
         phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '489160957621782',
         accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
         businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
         verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || 'your_verify_token',
-        baseUrl: `https://graph.facebook.com/${process.env.WHATSAPP_VERSION || 'v22.0'}`
+        baseUrl: `https://graph.facebook.com/${process.env.WHATSAPP_VERSION || 'v23.0'}`
     },
     wit: {
         accessToken: process.env.WIT_AI_ACCESS_TOKEN

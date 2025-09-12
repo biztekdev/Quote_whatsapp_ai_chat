@@ -1,4 +1,5 @@
 import { LegacyConversationState, MylarBagProduct, LegacyQuote } from '../models/conversationModels.js';
+import { ProductCategory, Product } from '../models/productModel.js';
 import crypto from 'crypto';
 
 class ConversationService {
@@ -64,6 +65,7 @@ class ConversationService {
      * Reset conversation for a user
      */
     async resetConversation(phone) {
+        console.log(`🔄 Resetting conversation for ${phone}`);
         try {
             await LegacyConversationState.findOneAndUpdate(
                 { phone, isActive: true },
@@ -86,6 +88,33 @@ class ConversationService {
             return newState;
         } catch (error) {
             console.error('Error resetting conversation:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get all active product categories
+     */
+    async getProductCategories() {
+        try {
+            return await ProductCategory.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+        } catch (error) {
+            console.error('Error getting product categories:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get products by category ID
+     */
+    async getProductsByCategory(categoryId) {
+        try {
+            return await Product.find({ 
+                categoryId: categoryId,
+                isActive: true 
+            }).sort({ sortOrder: 1, name: 1 });
+        } catch (error) {
+            console.error('Error getting products by category:', error);
             throw error;
         }
     }

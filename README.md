@@ -29,7 +29,7 @@ Update the `.env` file with your actual credentials:
 WHATSAPP_ACCESS_TOKEN=your_actual_access_token
 WHATSAPP_PHONE_NUMBER_ID=489160957621782
 WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_account_id
-WHATSAPP_VERSION=v22.0
+WHATSAPP_VERSION=v23.0
 WIT_AI_ACCESS_TOKEN=your_wit_ai_token
 WHATSAPP_VERIFY_TOKEN=your_webhook_verify_token
 PORT=3000

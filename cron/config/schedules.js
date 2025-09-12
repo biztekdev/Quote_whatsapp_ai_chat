@@ -5,7 +5,7 @@
 
 export const CRON_SCHEDULES = {
     // Cleanup jobs - Only inactive conversation state cleanup is active
-    CLEANUP_LEGACY_CONVERSATIONS: '* * * * *', // Every minute
+    CLEANUP_LEGACY_CONVERSATIONS: '*/3 * * * *', // Every 3 minutes
     
     // Disabled jobs (commented out)
     // CLEANUP_OLD_QUOTES: '0 2 * * *', // Daily at 2 AM UTC

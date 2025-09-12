@@ -74,8 +74,8 @@ export const CRON_SCHEDULES = {
 
 ### Cleanup Jobs
 
-- **cleanupLegacyConversations**: Removes inactive conversation states older than 10 minutes (runs every minute)
-- **cleanupLegacyConversationsCustom**: Custom cleanup with configurable time threshold
+- **cleanupLegacyConversations**: Updates conversation states older than 10 minutes to set isActive: false (runs every 3 minutes)
+- **cleanupLegacyConversationsCustom**: Custom update with configurable time threshold
 - **getLegacyConversationStats**: Provides statistics about conversation states
 
 **Note**: Only the inactive conversation state cleanup job is currently active. All other jobs are disabled.

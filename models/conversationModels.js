@@ -9,17 +9,32 @@ const conversationStateSchema = new mongoose.Schema({
     },
     currentStep: {
         type: String,
-        enum: ['start', 'greeting_response', 'product_selection', 'dimension_input', 'material_selection', 'finish_selection', 'quantity_input', 'quote_generation', 'completed'],
+        enum: ['start', 'greeting_response', 'category_selection','product_selection', 'dimension_input', 'material_selection', 'finish_selection', 'quantity_input', 'quote_generation', 'completed'],
         default: 'start'
     },
     conversationData: {
         wantsQuote: Boolean,
+        requestedCategory: String,
+        requestedProductName: String,
+        selectedCategory: {
+            id: String,
+            erp_id: Number,
+            name: String,
+            description: String
+        },
         selectedProduct: {
             id: String,
+            erp_id: Number,
             name: String,
-            dimensionNames: [String],
-            availableMaterials: [String],
-            availableFinishes: [String]
+            description: String,
+            basePrice: Number,
+            dimensionFields: [{
+                name: String,
+                unit: String,
+                isRequired: Boolean,
+                minValue: Number,
+                maxValue: Number
+            }]
         },
         dimensions: [{
             name: String,

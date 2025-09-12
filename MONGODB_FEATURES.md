@@ -257,7 +257,7 @@ Add to your `.env` file:
 # Existing WhatsApp settings...
 WHATSAPP_ACCESS_TOKEN=your_token_here
 WHATSAPP_PHONE_NUMBER_ID=489160957621782
-WHATSAPP_VERSION=v22.0
+WHATSAPP_VERSION=v23.0
 
 # New MongoDB setting
 MONGODB_URI=mongodb+srv://username:password@cluster0.abcde.mongodb.net/whatsapp_webhooks?retryWrites=true&w=majority
