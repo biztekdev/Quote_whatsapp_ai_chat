@@ -9,8 +9,23 @@ class MongoLogger {
     async checkConnection() {
         try {
             const mongoose = await import('mongoose');
-            this.isConnected = mongoose.connection.readyState === 1;
+            // Get the default export from mongoose
+            const mongooseDefault = mongoose.default || mongoose;
+            
+            // Check if mongoose is connected (readyState 1 = connected)
+            this.isConnected = mongooseDefault.connection.readyState === 1;
+            
+            // Additional check: try to ping the database if connected
+            if (this.isConnected && mongooseDefault.connection.db) {
+                try {
+                    await mongooseDefault.connection.db.admin().ping();
+                } catch (pingError) {
+                    console.warn('MongoDB ping failed, but connection appears active. Continuing...', pingError.message);
+                    // Don't mark as disconnected just because ping failed - connection might still work
+                }
+            }
         } catch (error) {
+            console.warn('checkConnection error:', error.message);
             this.isConnected = false;
         }
     }
@@ -23,6 +38,11 @@ class MongoLogger {
             if (!this.isConnected) {
                 // Fallback to console if MongoDB is not connected
                 console[level === 'warn' ? 'warn' : level](`[${level.toUpperCase()}] ${message}`, meta);
+                
+                // Add debug info for webhook logs specifically
+                if (meta.source === 'webhook' || message.includes('Webhook')) {
+                    console.log('[WEBHOOK-LOG-DEBUG] MongoDB not connected, webhook data logged to console only');
+                }
                 return;
             }
 
@@ -42,6 +62,11 @@ class MongoLogger {
             // Fallback to console if logging fails
             console.error('Failed to save log to MongoDB:', error.message);
             console[level === 'warn' ? 'warn' : level](`[${level.toUpperCase()}] ${message}`, meta);
+            
+            // Mark as disconnected if we get a database error
+            if (error.name === 'MongooseError' || error.name === 'MongoError') {
+                this.isConnected = false;
+            }
         }
     }
 
@@ -195,10 +220,36 @@ class MongoLogger {
     }
 
     async logWebhook(webhookData, source = 'webhook') {
-        await this.info('Webhook received', {
-            data: webhookData,
-            source
-        });
+        try {
+            // Add more detailed webhook information
+            const webhookInfo = {
+                data: webhookData,
+                source,
+                dataSize: JSON.stringify(webhookData).length,
+                hasEntry: !!webhookData?.entry,
+                entryCount: webhookData?.entry?.length || 0,
+                timestamp: new Date().toISOString()
+            };
+            
+            // Extract message info if available
+            if (webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
+                const message = webhookData.entry[0].changes[0].value.messages[0];
+                webhookInfo.messageId = message.id;
+                webhookInfo.messageFrom = message.from;
+                webhookInfo.messageType = message.type;
+            }
+            
+            await this.info('Webhook received', webhookInfo);
+            
+        } catch (error) {
+            // Fallback logging if structured logging fails
+            console.error('Failed to log webhook with structure:', error.message);
+            await this.info('Webhook received (fallback)', {
+                source,
+                error: error.message,
+                rawDataLength: webhookData ? JSON.stringify(webhookData).length : 0
+            });
+        }
     }
 
     async logMessage(messageData, userId = null) {
@@ -217,6 +268,12 @@ class MongoLogger {
             isConnected: this.isConnected,
             timestamp: new Date()
         };
+    }
+
+    // Force refresh connection status
+    async refreshConnection() {
+        await this.checkConnection();
+        return this.isConnected;
     }
 }
 
