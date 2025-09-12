@@ -151,7 +151,7 @@ app.get("/webhook", async (req, res) => {
         await mongoLogger.info('Webhook verification', { 
             mode, 
             token: token ? '***' : 'missing', 
-            challenge, 
+            challenge,
             query: req.query 
         });
         
@@ -179,14 +179,39 @@ app.post('/webhook', async (req, res) => {
         await mongoLogger.refreshConnection();
         await mongoLogger.logWebhook(req.body, 'webhook');
         
-        const message = req.body;
-        const result = await messageHandler.handleIncomingMessage(message);
+        // Extract message from webhook payload
+        const webhookData = req.body;
+        
+        // Check if this is a valid WhatsApp webhook with messages
+        if (webhookData.entry && webhookData.entry.length > 0) {
+            const entry = webhookData.entry[0];
+            if (entry.changes && entry.changes.length > 0) {
+                const change = entry.changes[0];
+                if (change.value && change.value.messages && change.value.messages.length > 0) {
+                    // Process each message in the webhook
+                    for (const message of change.value.messages) {
+                        await mongoLogger.info('Processing individual message', { 
+                            messageId: message.id, 
+                            from: message.from, 
+                            type: message.type 
+                        });
+                        const result = await messageHandler.handleIncomingMessage(message);
+                    }
+                } else {
+                    await mongoLogger.info('Webhook received but no messages found', { webhookData });
+                }
+            } else {
+                await mongoLogger.info('Webhook received but no changes found', { webhookData });
+            }
+        } else {
+            await mongoLogger.info('Webhook received but no entries found', { webhookData });
+        }
         
         const processingTime = Date.now() - startTime;
         await mongoLogger.info('Webhook processed', { 
             processingTime: `${processingTime}ms`,
-            messageId: message?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id,
-            from: message?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from
+            messageId: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id,
+            from: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from
         });
 
         res.status(200).json({
