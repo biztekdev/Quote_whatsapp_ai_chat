@@ -672,7 +672,7 @@ class DashboardApp {
         if (!categories || categories.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="text-center py-5">
+                    <td colspan="4" class="text-center py-5">
                         <div class="text-muted">
                             <i class="fas fa-folder fa-3x mb-3"></i>
                             <h5>No Categories Found</h5>
@@ -738,7 +738,7 @@ class DashboardApp {
         if (!products || products.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="text-center py-5">
+                    <td colspan="5" class="text-center py-5">
                         <div class="text-muted">
                             <i class="fas fa-box fa-3x mb-3"></i>
                             <h5>No Products Found</h5>
@@ -803,7 +803,7 @@ class DashboardApp {
         if (!materials || materials.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-5">
+                    <td colspan="4" class="text-center py-5">
                         <div class="text-muted">
                             <i class="fas fa-layer-group fa-3x mb-3"></i>
                             <h5>No Materials Found</h5>
@@ -856,7 +856,7 @@ class DashboardApp {
         if (!finishes || finishes.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="4" class="text-center py-5">
+                    <td colspan="5" class="text-center py-5">
                         <div class="text-muted">
                             <i class="fas fa-paint-brush fa-3x mb-3"></i>
                             <h5>No Finishes Found</h5>
