@@ -246,8 +246,19 @@ router.delete('/categories/:id', async (req, res) => {
 // Get all products
 router.get('/products', async (req, res) => {
     try {
-        const { categoryId } = req.query;
-        const query = categoryId ? { categoryId } : {};
+        const { categoryId, search } = req.query;
+        let query = {};
+        
+        if (categoryId) {
+            query.categoryId = categoryId;
+        }
+        
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
         
         const products = await Product.find(query)
             .populate('categoryId')
@@ -320,8 +331,19 @@ router.delete('/products/:id', async (req, res) => {
 // Get all materials
 router.get('/materials', async (req, res) => {
     try {
-        const { categoryId } = req.query;
-        const query = categoryId ? { categoryId } : {};
+        const { categoryId, search } = req.query;
+        let query = {};
+        
+        if (categoryId) {
+            query.categoryId = categoryId;
+        }
+        
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
         
         const materials = await Material.find(query)
             .populate('categoryId')
@@ -447,11 +469,17 @@ router.delete('/finish-categories/:id', async (req, res) => {
 // Get all product finishes
 router.get('/finishes', async (req, res) => {
     try {
-        const { categoryId, productCategoryId } = req.query;
+        const { categoryId, productCategoryId, search } = req.query;
         let query = {};
         
-        if (categoryId) query.categoryId = categoryId;
-        if (productCategoryId) query.productCategoryId = productCategoryId;
+        if (categoryId) query.productCategoryId = categoryId;
+        
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
         
         const finishes = await ProductFinish.find(query)
             .populate('productCategoryId')

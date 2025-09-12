@@ -74,8 +74,39 @@ class DashboardApp {
             if (e.key === 'Enter') this.searchUsers();
         });
         
+        document.getElementById('productSearch')?.addEventListener('input', (e) => {
+            clearTimeout(this.productSearchTimeout);
+            this.productSearchTimeout = setTimeout(() => {
+                this.searchProducts();
+            }, 300);
+        });
+        
         document.getElementById('productSearch')?.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.searchProducts();
+        });
+        
+        // Materials search
+        document.getElementById('materialSearch')?.addEventListener('input', (e) => {
+            clearTimeout(this.materialSearchTimeout);
+            this.materialSearchTimeout = setTimeout(() => {
+                this.searchMaterials();
+            }, 300);
+        });
+        
+        document.getElementById('materialSearch')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.searchMaterials();
+        });
+        
+        // Finishes search
+        document.getElementById('finishSearch')?.addEventListener('input', (e) => {
+            clearTimeout(this.finishSearchTimeout);
+            this.finishSearchTimeout = setTimeout(() => {
+                this.searchFinishes();
+            }, 300);
+        });
+        
+        document.getElementById('finishSearch')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.searchFinishes();
         });
         
         document.getElementById('quoteSearch')?.addEventListener('keypress', (e) => {
@@ -559,9 +590,11 @@ class DashboardApp {
                 break;
             case 'materials':
                 await this.loadMaterials();
+                await this.loadCategoriesForMaterialFilter();
                 break;
             case 'finishes':
                 await this.loadFinishes();
+                await this.loadCategoriesForFinishFilter();
                 break;
             case 'quotes':
                 await this.loadQuotes();
@@ -707,15 +740,29 @@ class DashboardApp {
     }
 
     // Products Management
-    async loadProducts(categoryId = '') {
+    async loadProducts(categoryId = '', searchTerm = '') {
         try {
             this.showLoading();
-            const url = categoryId ? `/products?categoryId=${categoryId}` : '/products';
+            let url = '/products';
+            const params = new URLSearchParams();
+            
+            if (categoryId) {
+                params.append('categoryId', categoryId);
+            }
+            if (searchTerm) {
+                params.append('search', searchTerm);
+            }
+            
+            if (params.toString()) {
+                url += '?' + params.toString();
+            }
+            
             const response = await this.apiCall(url);
             this.renderProducts(response.data);
             this.hideLoading();
         } catch (error) {
             this.hideLoading();
+            this.showAlert('Failed to load products: ' + error.message, 'danger');
         }
     }
 
@@ -729,6 +776,32 @@ class DashboardApp {
                 activeCategories.map(cat => `<option value="${cat._id}">${cat.name}</option>`).join('');
         } catch (error) {
             console.error('Error loading categories for filter:', error);
+        }
+    }
+
+    async loadCategoriesForMaterialFilter() {
+        try {
+            const response = await this.apiCall('/categories');
+            const select = document.getElementById('materialCategoryFilter');
+            // Filter only active categories
+            const activeCategories = response.data.filter(cat => cat.isActive === true);
+            select.innerHTML = '<option value="">All Categories</option>' +
+                activeCategories.map(cat => `<option value="${cat._id}">${cat.name}</option>`).join('');
+        } catch (error) {
+            console.error('Error loading categories for material filter:', error);
+        }
+    }
+
+    async loadCategoriesForFinishFilter() {
+        try {
+            const response = await this.apiCall('/categories');
+            const select = document.getElementById('finishCategoryFilter');
+            // Filter only active categories
+            const activeCategories = response.data.filter(cat => cat.isActive === true);
+            select.innerHTML = '<option value="">All Categories</option>' +
+                activeCategories.map(cat => `<option value="${cat._id}">${cat.name}</option>`).join('');
+        } catch (error) {
+            console.error('Error loading categories for finish filter:', error);
         }
     }
 
@@ -783,18 +856,90 @@ class DashboardApp {
 
     filterProducts() {
         const categoryId = document.getElementById('productCategoryFilter').value;
-        this.loadProducts(categoryId);
+        const searchTerm = document.getElementById('productSearch').value.trim();
+        console.log('Filtering products by category:', categoryId, 'and search:', searchTerm);
+        app.loadProducts(categoryId, searchTerm);
+    }
+
+    searchProducts() {
+        const categoryId = document.getElementById('productCategoryFilter').value;
+        const searchTerm = document.getElementById('productSearch').value.trim();
+        console.log('Searching products with term:', searchTerm, 'in category:', categoryId);
+        app.loadProducts(categoryId, searchTerm);
+    }
+
+    clearProductSearch() {
+        document.getElementById('productSearch').value = '';
+        document.getElementById('productCategoryFilter').value = '';
+        app.loadProducts();
+    }
+
+    // Materials filtering and search
+    filterMaterials() {
+        const categoryId = document.getElementById('materialCategoryFilter').value;
+        const searchTerm = document.getElementById('materialSearch').value.trim();
+        console.log('Filtering materials by category:', categoryId, 'and search:', searchTerm);
+        app.loadMaterials(categoryId, searchTerm);
+    }
+
+    searchMaterials() {
+        const categoryId = document.getElementById('materialCategoryFilter').value;
+        const searchTerm = document.getElementById('materialSearch').value.trim();
+        console.log('Searching materials with term:', searchTerm, 'in category:', categoryId);
+        app.loadMaterials(categoryId, searchTerm);
+    }
+
+    clearMaterialSearch() {
+        document.getElementById('materialSearch').value = '';
+        document.getElementById('materialCategoryFilter').value = '';
+        app.loadMaterials();
+    }
+
+    // Finishes filtering and search
+    filterFinishes() {
+        const categoryId = document.getElementById('finishCategoryFilter').value;
+        const searchTerm = document.getElementById('finishSearch').value.trim();
+        console.log('Filtering finishes by category:', categoryId, 'and search:', searchTerm);
+        app.loadFinishes(categoryId, searchTerm);
+    }
+
+    searchFinishes() {
+        const categoryId = document.getElementById('finishCategoryFilter').value;
+        const searchTerm = document.getElementById('finishSearch').value.trim();
+        console.log('Searching finishes with term:', searchTerm, 'in category:', categoryId);
+        app.loadFinishes(categoryId, searchTerm);
+    }
+
+    clearFinishSearch() {
+        document.getElementById('finishSearch').value = '';
+        document.getElementById('finishCategoryFilter').value = '';
+        app.loadFinishes();
     }
 
     // Materials Management
-    async loadMaterials() {
+    async loadMaterials(categoryId = '', searchTerm = '') {
         try {
             this.showLoading();
-            const response = await this.apiCall('/materials');
+            let url = '/materials';
+            const params = new URLSearchParams();
+            
+            if (categoryId) {
+                params.append('categoryId', categoryId);
+            }
+            if (searchTerm) {
+                params.append('search', searchTerm);
+            }
+            
+            if (params.toString()) {
+                url += '?' + params.toString();
+            }
+            
+            const response = await this.apiCall(url);
             this.renderMaterials(response.data);
             this.hideLoading();
         } catch (error) {
             this.hideLoading();
+            this.showAlert('Failed to load materials: ' + error.message, 'danger');
         }
     }
 
@@ -840,14 +985,29 @@ class DashboardApp {
 
 
     // Finishes Management
-    async loadFinishes() {
+    async loadFinishes(categoryId = '', searchTerm = '') {
         try {
             this.showLoading();
-            const response = await this.apiCall('/finishes');
+            let url = '/finishes';
+            const params = new URLSearchParams();
+            
+            if (categoryId) {
+                params.append('categoryId', categoryId);
+            }
+            if (searchTerm) {
+                params.append('search', searchTerm);
+            }
+            
+            if (params.toString()) {
+                url += '?' + params.toString();
+            }
+            
+            const response = await this.apiCall(url);
             this.renderFinishes(response.data);
             this.hideLoading();
         } catch (error) {
             this.hideLoading();
+            this.showAlert('Failed to load finishes: ' + error.message, 'danger');
         }
     }
 
