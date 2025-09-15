@@ -804,6 +804,11 @@ app.post('/test-message-processing', async (req, res) => {
         
         console.log('🧪 Testing message handler with:', testMessage);
         
+        // Clear any existing response tracking for this test message
+        if (messageHandler.responseTracker) {
+            messageHandler.responseTracker.delete(testMessage.id);
+        }
+        
         const result = await messageHandler.handleIncomingMessage(testMessage);
         
         console.log('✅ Test message processed successfully:', result);
@@ -812,7 +817,8 @@ app.post('/test-message-processing', async (req, res) => {
             success: true,
             message: 'Message handler working correctly',
             testMessage,
-            result
+            result,
+            responsesSent: messageHandler.responseTracker.has(testMessage.id) ? 1 : 0
         });
         
     } catch (error) {

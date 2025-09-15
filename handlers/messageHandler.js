@@ -14,6 +14,46 @@ class MessageHandler {
         this.whatsappService = whatsappService;
         this.wit = wit;
         this.witService = new WitService();
+        // Track responses to prevent duplicates
+        this.responseTracker = new Map();
+    }
+
+    // Helper method to track if we've already responded to a message
+    hasResponded(messageId) {
+        return this.responseTracker.has(messageId);
+    }
+
+    // Mark that we've responded to a message
+    markAsResponded(messageId) {
+        this.responseTracker.set(messageId, Date.now());
+        
+        // Clean up old entries (keep only last 1000)
+        if (this.responseTracker.size > 1000) {
+            const entries = Array.from(this.responseTracker.entries());
+            this.responseTracker.clear();
+            // Keep the most recent 500 entries
+            entries.slice(-500).forEach(([id, timestamp]) => {
+                this.responseTracker.set(id, timestamp);
+            });
+        }
+    }
+
+    // Send message only if we haven't already responded
+    async sendMessageOnce(messageId, to, message, type = 'text') {
+        if (this.hasResponded(messageId)) {
+            console.log(`⏭️ Already responded to message ${messageId}, skipping duplicate response`);
+            await mongoLogger.warn('Duplicate response prevented', { 
+                messageId, 
+                to, 
+                message: message.substring(0, 100) + '...',
+                source: 'sendMessageOnce'
+            });
+            return null;
+        }
+
+        this.markAsResponded(messageId);
+        console.log(`📤 Sending response for message ${messageId}`);
+        return await this.whatsappService.sendMessage(to, message, type);
     }
 
     async handleIncomingMessage(message, value = null) {
@@ -119,7 +159,7 @@ class MessageHandler {
                 conversationState = await conversationService.getConversationState(from);
             }
             // Process message through our conversation flow
-            await this.processConversationFlow(messageText, from, conversationState, false);
+            await this.processConversationFlow(message, messageText, from, conversationState, false);
 
         } catch (error) {
             console.error('Error in handleTextMessage:', error);
@@ -613,7 +653,7 @@ class MessageHandler {
         return currentStep; // Keep current step if no advancement possible
     }
 
-    async processConversationFlow(messageText, from, conversationState, hasResponded = false) {
+    async processConversationFlow(message, messageText, from, conversationState, hasResponded = false) {
         console.log("processConversationFlow ", messageText, from, conversationState);
         try {
             const currentStep = conversationState.currentStep;
@@ -637,7 +677,7 @@ class MessageHandler {
 
                 // Recursively process the next step - but don't send duplicate responses
                 const updatedState = await conversationService.getConversationState(from);
-                return await this.processConversationFlow(messageText, from, updatedState, hasResponded);
+                return await this.processConversationFlow(message, messageText, from, updatedState, hasResponded);
             }
             
             // Only process step if we haven't already responded
@@ -684,8 +724,9 @@ class MessageHandler {
                         messageText: messageText
                     });
 
-                    // Send user-friendly error message
-                    await this.whatsappService.sendMessage(
+                    // Send user-friendly error message (only once)
+                    await this.sendMessageOnce(
+                        message.id,
                         from,
                         "Sorry, I encountered an error processing your request. Let me start over."
                     );
@@ -701,10 +742,14 @@ class MessageHandler {
             }
         } catch (error) {
             await mongoLogger.logError(error, { source: 'conversation-flow' });
-            await this.whatsappService.sendMessage(
-                from,
-                "I'm sorry, something went wrong. Let me restart our conversation. Please type 'hi' to begin."
-            );
+            // Only send error message if we haven't already responded
+            if (!this.hasResponded(message.id)) {
+                await this.sendMessageOnce(
+                    message.id,
+                    from,
+                    "I'm sorry, something went wrong. Let me restart our conversation. Please type 'hi' to begin."
+                );
+            }
             await conversationService.resetConversation(from);
         }
     }
