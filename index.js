@@ -21,6 +21,7 @@ import authRoutes from './api/authRoutes.js';
 import { authenticateToken } from './middleware/auth.js';
 import erpSyncRoutes from './api/erpSyncRoutes.js';
 import cronManager from './cron/index.js';
+import { ProcessedMessage } from './models/processedMessageModel.js';
 
 // Load environment variables
 dotenv.config();
@@ -180,6 +181,9 @@ app.get("/webhook", async (req, res) => {
     }
 });
 
+// Create a Set to track processed message IDs (in-memory cache)
+const processedMessageIds = new Set();
+
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
@@ -201,11 +205,80 @@ app.post('/webhook', async (req, res) => {
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
                     // Process each message in the webhook
                     for (const message of change.value.messages) {
+                        const messageId = message.id;
+                        const from = message.from;
+                        const messageType = message.type;
+                        
                         await mongoLogger.info('Processing individual message', { 
-                            messageId: message.id, 
-                            from: message.from, 
-                            type: message.type 
+                            messageId, 
+                            from, 
+                            type: messageType 
                         });
+                        
+                        // Check if message has already been processed (in-memory check first)
+                        if (processedMessageIds.has(messageId)) {
+                            await mongoLogger.info('Message already processed (memory), skipping', { 
+                                messageId, 
+                                from, 
+                                type: messageType 
+                            });
+                            continue; // Skip this message
+                        }
+                        
+                        // Check database for processed messages (in case server restarted)
+                        if (dbConnected) {
+                            try {
+                                const existingMessage = await ProcessedMessage.findOne({ messageId });
+                                if (existingMessage) {
+                                    await mongoLogger.info('Message already processed (database), skipping', { 
+                                        messageId, 
+                                        from, 
+                                        type: messageType,
+                                        originallyProcessedAt: existingMessage.processedAt
+                                    });
+                                    // Add to memory cache for future quick checks
+                                    processedMessageIds.add(messageId);
+                                    continue; // Skip this message
+                                }
+                            } catch (dbError) {
+                                await mongoLogger.warn('Error checking processed messages in database', { 
+                                    messageId, 
+                                    error: dbError.message 
+                                });
+                                // Continue processing even if DB check fails
+                            }
+                        }
+                        
+                        // Add message ID to processed set
+                        processedMessageIds.add(messageId);
+                        
+                        // Store in database for persistence
+                        if (dbConnected) {
+                            try {
+                                await ProcessedMessage.create({
+                                    messageId,
+                                    from,
+                                    messageType,
+                                    webhookData: message
+                                });
+                            } catch (dbError) {
+                                await mongoLogger.warn('Error storing processed message in database', { 
+                                    messageId, 
+                                    error: dbError.message 
+                                });
+                                // Continue processing even if DB storage fails
+                            }
+                        }
+                        
+                        // Clean up old message IDs (keep only last 1000 to prevent memory issues)
+                        if (processedMessageIds.size > 1000) {
+                            const idsArray = Array.from(processedMessageIds);
+                            processedMessageIds.clear();
+                            // Keep the last 500 IDs
+                            idsArray.slice(-500).forEach(id => processedMessageIds.add(id));
+                        }
+                        
+                        // Process the message
                         const result = await messageHandler.handleIncomingMessage(message);
                     }
                 } else {
