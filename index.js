@@ -900,6 +900,62 @@ app.get('/whatsapp-config-check', async (req, res) => {
     }
 });
 
+// Test webhook endpoint
+app.post('/test-webhook', async (req, res) => {
+    console.log('🧪 Test webhook called with:', req.body);
+    
+    // Simulate a real WhatsApp webhook
+    const testWebhookData = {
+        object: "whatsapp_business_account",
+        entry: [{
+            id: "489160957621782",
+            changes: [{
+                value: {
+                    messaging_product: "whatsapp",
+                    metadata: {
+                        display_phone_number: "15550000000",
+                        phone_number_id: "489160957621782"
+                    },
+                    contacts: [{
+                        profile: {
+                            name: "Test User"
+                        },
+                        wa_id: "923260533337"
+                    }],
+                    messages: [{
+                        from: "923260533337",
+                        id: `test_${Date.now()}`,
+                        timestamp: Math.floor(Date.now() / 1000).toString(),
+                        text: {
+                            body: "Test message from webhook"
+                        },
+                        type: "text"
+                    }]
+                },
+                field: "messages"
+            }]
+        }]
+    };
+    
+    try {
+        // Process the test webhook
+        await processMessagesAsync(testWebhookData, Date.now());
+        
+        res.json({
+            success: true,
+            message: 'Test webhook processed successfully',
+            webhookData: testWebhookData
+        });
+    } catch (error) {
+        console.error('❌ Test webhook error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            webhookData: testWebhookData
+        });
+    }
+});
+
 // Test endpoint to verify message processing
 app.post('/test-message-processing', async (req, res) => {
     try {
