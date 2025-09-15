@@ -126,9 +126,36 @@ class MessageHandler {
             // Get current conversation state
             let conversationState = await conversationService.getConversationState(from);
 
-            // Process message with Wit.ai first
-            const witResponse = await this.witService.processMessage(messageText);
-            console.log("witResponse111111111 ", witResponse);
+            // Process message with Wit.ai first (with error handling)
+            let witResponse = null;
+            let witEntities = {};
+            
+            try {
+                witResponse = await this.witService.processMessage(messageText);
+                console.log("witResponse111111111 ", witResponse);
+                witEntities = witResponse?.data?.entities || {};
+                
+                await mongoLogger.info('Wit.ai processing successful', { 
+                    messageText, 
+                    from, 
+                    entitiesFound: Object.keys(witEntities).length,
+                    step: 'WIT_SUCCESS'
+                });
+                
+            } catch (witError) {
+                console.error("❌ Wit.ai processing failed:", witError);
+                await mongoLogger.error('Wit.ai processing failed', { 
+                    messageText, 
+                    from,
+                    error: witError.message,
+                    stack: witError.stack,
+                    step: 'WIT_ERROR'
+                });
+                
+                // Continue without Wit.ai - use empty entities
+                witResponse = { data: { entities: {} } };
+                witEntities = {};
+            }
 
             // Extract and update conversation data with entities
             const updatedConversationData = await this.extractAndUpdateConversationData(
@@ -159,7 +186,21 @@ class MessageHandler {
                 conversationState = await conversationService.getConversationState(from);
             }
             // Process message through our conversation flow
+            await mongoLogger.info('Starting conversation flow processing', { 
+                messageText, 
+                from,
+                currentStep: conversationState.currentStep,
+                hasConversationData: !!conversationState.conversationData,
+                step: 'CONVERSATION_FLOW_START'
+            });
+            
             await this.processConversationFlow(message, messageText, from, conversationState, false);
+            
+            await mongoLogger.info('Conversation flow processing completed', { 
+                messageText, 
+                from,
+                step: 'CONVERSATION_FLOW_END'
+            });
 
         } catch (error) {
             console.error('Error in handleTextMessage:', error);
@@ -685,7 +726,7 @@ class MessageHandler {
                 try {
                     switch (currentStep) {
                         case 'start':
-                            await this.handleStartStep(messageText, from);
+                            await this.handleStartStep(messageText, from, message.id);
                             break;
                         case 'greeting_response':
                             await this.handleGreetingResponse(messageText, from);
@@ -713,7 +754,7 @@ class MessageHandler {
                             break;
                         default:
                             console.log(`Unknown step: ${currentStep}, defaulting to start step`);
-                            await this.handleStartStep(messageText, from);
+                            await this.handleStartStep(messageText, from, message.id);
                     }
                 } catch (stepError) {
                     console.error(`Error in step ${currentStep}:`, stepError);
@@ -754,24 +795,52 @@ class MessageHandler {
         }
     }
 
-    async handleStartStep(messageText, from) {
-        // Process with Wit.ai to detect greeting
-        const witResponse = await this.witService.processMessage(messageText);
-        const intent = witResponse.data?.intents?.[0]?.name;
+    async handleStartStep(messageText, from, messageId) {
+        try {
+            // Process with Wit.ai to detect greeting (with fallback)
+            let intent = null;
+            try {
+                const witResponse = await this.witService.processMessage(messageText);
+                intent = witResponse.data?.intents?.[0]?.name;
+            } catch (witError) {
+                console.log("Wit.ai not available, using fallback greeting detection");
+                await mongoLogger.warn('Wit.ai unavailable in handleStartStep, using fallback', { 
+                    messageText, 
+                    from,
+                    error: witError.message
+                });
+            }
 
-        if (intent === 'greeting' || this.isGreeting(messageText)) {
-            await this.sendGreetingWithQuoteOption(from);
-            await conversationService.updateConversationState(from, {
-                currentStep: 'greeting_response'
+            if (intent === 'greeting' || this.isGreeting(messageText)) {
+                await this.sendGreetingWithQuoteOption(from);
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'greeting_response'
+                });
+            } else {
+                await this.sendMessageOnce(
+                    messageId,
+                    from,
+                    "Hello! 👋 Welcome to our mylar bag service. Please say 'Hi' to get started with your quote request."
+                );
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'greeting_response'
+                });
+            }
+        } catch (error) {
+            console.error('Error in handleStartStep:', error);
+            await mongoLogger.error('handleStartStep failed', { 
+                messageText, 
+                from,
+                error: error.message,
+                stack: error.stack
             });
-        } else {
-            await this.whatsappService.sendMessage(
+            
+            // Fallback response
+            await this.sendMessageOnce(
+                messageId,
                 from,
                 "Hello! 👋 Welcome to our mylar bag service. Please say 'Hi' to get started with your quote request."
             );
-            await conversationService.updateConversationState(from, {
-                currentStep: 'greeting_response'
-            });
         }
     }
 

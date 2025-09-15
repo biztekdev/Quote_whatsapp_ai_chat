@@ -5,6 +5,7 @@ class WitService {
     constructor() {
         this.accessToken = process.env.WIT_AI_ACCESS_TOKEN;
         this.client = null;
+        this.actions = {}; // Initialize actions object
         
         this.initializeClient();
     }
@@ -381,7 +382,7 @@ class WitService {
         return {
             initialized: !!this.client,
             hasAccessToken: !!this.accessToken,
-            actions: Object.keys(this.actions),
+            actions: this.actions ? Object.keys(this.actions) : [],
             timestamp: new Date().toISOString()
         };
     }
