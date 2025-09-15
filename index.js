@@ -376,6 +376,37 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
+// Clear processed messages cache (for testing)
+app.post('/clear-processed-messages', async (req, res) => {
+    try {
+        const memoryCount = processedMessageIds.size;
+        processedMessageIds.clear();
+        
+        let dbCount = 0;
+        if (dbConnected) {
+            const result = await ProcessedMessage.deleteMany({});
+            dbCount = result.deletedCount;
+        }
+        
+        console.log(`🧹 Cleared ${memoryCount} messages from memory and ${dbCount} from database`);
+        
+        res.json({
+            success: true,
+            message: 'Processed messages cache cleared',
+            clearedFromMemory: memoryCount,
+            clearedFromDatabase: dbCount
+        });
+        
+    } catch (error) {
+        console.error('❌ Error clearing processed messages:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to clear processed messages',
+            details: error.message
+        });
+    }
+});
+
 // Test endpoint to verify message processing
 app.post('/test-message-processing', async (req, res) => {
     try {
