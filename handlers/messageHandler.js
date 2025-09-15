@@ -119,7 +119,7 @@ class MessageHandler {
                 conversationState = await conversationService.getConversationState(from);
             }
             // Process message through our conversation flow
-            await this.processConversationFlow(messageText, from, conversationState);
+            await this.processConversationFlow(messageText, from, conversationState, false);
 
         } catch (error) {
             console.error('Error in handleTextMessage:', error);
@@ -613,7 +613,7 @@ class MessageHandler {
         return currentStep; // Keep current step if no advancement possible
     }
 
-    async processConversationFlow(messageText, from, conversationState) {
+    async processConversationFlow(messageText, from, conversationState, hasResponded = false) {
         console.log("processConversationFlow ", messageText, from, conversationState);
         try {
             const currentStep = conversationState.currentStep;
@@ -635,64 +635,69 @@ class MessageHandler {
                     currentStep: nextStep
                 });
 
-                // Recursively process the next step
+                // Recursively process the next step - but don't send duplicate responses
                 const updatedState = await conversationService.getConversationState(from);
-                return await this.processConversationFlow(messageText, from, updatedState);
+                return await this.processConversationFlow(messageText, from, updatedState, hasResponded);
             }
             
-            try {
-                switch (currentStep) {
-                    case 'start':
-                        await this.handleStartStep(messageText, from);
-                        break;
-                    case 'greeting_response':
-                        await this.handleGreetingResponse(messageText, from);
-                        break;
-                    case 'category_selection':
-                        await this.handleCategorySelection(messageText, from);
-                        break;
-                    case 'product_selection':
-                        await this.handleProductSelection(messageText, from);
-                        break;
-                    case 'dimension_input':
-                        await this.handleDimensionInput(messageText, from, conversationData);
-                        break;
-                    case 'material_selection':
-                        await this.handleMaterialSelection(messageText, from, conversationData);
-                        break;
-                    case 'finish_selection':
-                        await this.handleFinishSelection(messageText, from, conversationData);
-                        break;
-                    case 'quantity_input':
-                        await this.handleQuantityInput(messageText, from, conversationData);
-                        break;
-                    case 'quote_generation':
-                        await this.handleQuoteGeneration(messageText, from, conversationData);
-                        break;
-                    default:
-                        console.log(`Unknown step: ${currentStep}, defaulting to start step`);
-                        await this.handleStartStep(messageText, from);
+            // Only process step if we haven't already responded
+            if (!hasResponded) {
+                try {
+                    switch (currentStep) {
+                        case 'start':
+                            await this.handleStartStep(messageText, from);
+                            break;
+                        case 'greeting_response':
+                            await this.handleGreetingResponse(messageText, from);
+                            break;
+                        case 'category_selection':
+                            await this.handleCategorySelection(messageText, from);
+                            break;
+                        case 'product_selection':
+                            await this.handleProductSelection(messageText, from);
+                            break;
+                        case 'dimension_input':
+                            await this.handleDimensionInput(messageText, from, conversationData);
+                            break;
+                        case 'material_selection':
+                            await this.handleMaterialSelection(messageText, from, conversationData);
+                            break;
+                        case 'finish_selection':
+                            await this.handleFinishSelection(messageText, from, conversationData);
+                            break;
+                        case 'quantity_input':
+                            await this.handleQuantityInput(messageText, from, conversationData);
+                            break;
+                        case 'quote_generation':
+                            await this.handleQuoteGeneration(messageText, from, conversationData);
+                            break;
+                        default:
+                            console.log(`Unknown step: ${currentStep}, defaulting to start step`);
+                            await this.handleStartStep(messageText, from);
+                    }
+                } catch (stepError) {
+                    console.error(`Error in step ${currentStep}:`, stepError);
+                    await mongoLogger.logError(stepError, {
+                        source: 'conversation-step-handler',
+                        step: currentStep,
+                        from: from,
+                        messageText: messageText
+                    });
+
+                    // Send user-friendly error message
+                    await this.whatsappService.sendMessage(
+                        from,
+                        "Sorry, I encountered an error processing your request. Let me start over."
+                    );
+
+                    // Reset conversation to start step
+                    await conversationService.updateConversationState(from, {
+                        currentStep: 'start',
+                        conversationData: {}
+                    });
                 }
-            } catch (stepError) {
-                console.error(`Error in step ${currentStep}:`, stepError);
-                await mongoLogger.logError(stepError, {
-                    source: 'conversation-step-handler',
-                    step: currentStep,
-                    from: from,
-                    messageText: messageText
-                });
-
-                // Send user-friendly error message
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, I encountered an error processing your request. Let me start over."
-                );
-
-                // Reset conversation to start step
-                await conversationService.updateConversationState(from, {
-                    currentStep: 'start',
-                    conversationData: {}
-                });
+            } else {
+                console.log(`Skipping step processing - already responded for ${from}`);
             }
         } catch (error) {
             await mongoLogger.logError(error, { source: 'conversation-flow' });
@@ -1009,7 +1014,7 @@ All dimensions should be in ${dimensionUnits}.`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
@@ -1305,7 +1310,7 @@ All dimensions should be in ${dimensionUnits}.`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
@@ -1364,7 +1369,7 @@ What quantity would you like?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
