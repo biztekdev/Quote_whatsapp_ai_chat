@@ -521,6 +521,14 @@ app.post('/webhook', async (req, res) => {
         await mongoLogger.refreshConnection();
         await mongoLogger.logWebhook(req.body, 'webhook');
         
+        // Also store in webhook service for debugging
+        try {
+            await webhookService.storeWebhook(req.body);
+            console.log(`📝 [${webhookId}] Webhook stored in service`);
+        } catch (storeError) {
+            console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
+        }
+        
         // Log the raw webhook data for debugging
         console.log('📋 RAW WEBHOOK DATA:', JSON.stringify(req.body, null, 2));
         console.log('📋 WEBHOOK STRUCTURE:', {
@@ -796,6 +804,46 @@ app.get('/webhook-config-check', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Failed to check webhook configuration',
+            details: error.message
+        });
+    }
+});
+
+// Check if webhooks are being received in real-time
+app.get('/webhook-status', async (req, res) => {
+    try {
+        const recentCalls = await webhookService.getRecentCalls(5);
+        const now = new Date();
+        const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+        
+        const recentWebhooks = recentCalls.filter(call => 
+            new Date(call.receivedAt) > fiveMinutesAgo
+        );
+        
+        res.json({
+            success: true,
+            status: {
+                totalWebhooks: recentCalls.length,
+                recentWebhooks: recentWebhooks.length,
+                lastWebhook: recentCalls[0]?.receivedAt || 'None',
+                lastWebhookAge: recentCalls[0] ? 
+                    Math.round((now - new Date(recentCalls[0].receivedAt)) / 1000 / 60) + ' minutes ago' : 
+                    'Never',
+                hasMessages: recentCalls[0]?.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length > 0,
+                messageCount: recentCalls[0]?.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
+            },
+            recentWebhooks: recentWebhooks.map(call => ({
+                timestamp: call.receivedAt,
+                hasMessages: !!(call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
+                messageCount: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
+            }))
+        });
+        
+    } catch (error) {
+        console.error('❌ Error in webhook-status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get webhook status',
             details: error.message
         });
     }
