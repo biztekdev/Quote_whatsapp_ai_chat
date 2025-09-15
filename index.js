@@ -479,6 +479,51 @@ app.get('/conversation-status/:phone', async (req, res) => {
     }
 });
 
+// Diagnostic endpoint to check WhatsApp configuration
+app.get('/whatsapp-config-check', async (req, res) => {
+    try {
+        const config = {
+            accessToken: process.env.WHATSAPP_ACCESS_TOKEN ? 'Present' : 'Missing',
+            phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || 'Missing',
+            version: process.env.WHATSAPP_VERSION || 'v23.0',
+            baseURL: process.env.WHATSAPP_PHONE_NUMBER_ID ? 
+                `https://graph.facebook.com/${process.env.WHATSAPP_VERSION || 'v23.0'}/${process.env.WHATSAPP_PHONE_NUMBER_ID}` : 
+                'Cannot construct - missing phone number ID'
+        };
+        
+        console.log('🔧 WhatsApp Configuration Check:', config);
+        
+        // Test WhatsApp service initialization
+        let serviceStatus = 'Unknown';
+        try {
+            const testService = new WhatsAppService();
+            serviceStatus = testService.accessToken && testService.phoneNumberId ? 'Properly configured' : 'Missing credentials';
+        } catch (error) {
+            serviceStatus = `Error: ${error.message}`;
+        }
+        
+        res.json({
+            success: true,
+            configuration: config,
+            serviceStatus: serviceStatus,
+            recommendations: [
+                config.accessToken === 'Missing' ? 'Set WHATSAPP_ACCESS_TOKEN environment variable' : null,
+                !config.phoneNumberId || config.phoneNumberId === 'Missing' ? 'Set WHATSAPP_PHONE_NUMBER_ID environment variable' : null,
+                'Make sure your webhook URL is configured in Facebook Developer Console',
+                'Verify webhook verification token matches your server'
+            ].filter(Boolean)
+        });
+        
+    } catch (error) {
+        console.error('❌ Error checking WhatsApp config:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to check WhatsApp configuration',
+            details: error.message
+        });
+    }
+});
+
 // Test endpoint to verify message processing
 app.post('/test-message-processing', async (req, res) => {
     try {
