@@ -721,7 +721,7 @@ app.get('/webhook-config-check', async (req, res) => {
     }
 });
 
-// Simple debug endpoint to see recent webhook data
+// Detailed webhook analysis
 app.get('/debug-webhooks', async (req, res) => {
     try {
         // Get recent webhook calls from the webhook service
@@ -733,19 +733,44 @@ app.get('/debug-webhooks', async (req, res) => {
             });
         }
 
-        const recentCalls = await webhookService.getRecentCalls(10);
+        const recentCalls = await webhookService.getRecentCalls(5);
         
         res.json({
             success: true,
             count: recentCalls.length,
-            webhooks: recentCalls.map(call => ({
-                timestamp: call.receivedAt,
-                hasMessages: !!(call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
-                messageCount: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
-                firstMessage: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || null,
-                field: call.whatsappData?.entry?.[0]?.changes?.[0]?.field,
-                webhookType: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.statuses ? 'status' : 'message'
-            }))
+            webhooks: recentCalls.map(call => {
+                const entry = call.whatsappData?.entry?.[0];
+                const changes = entry?.changes?.[0];
+                const value = changes?.value;
+                
+                return {
+                    timestamp: call.receivedAt,
+                    // Raw webhook structure analysis
+                    hasEntry: !!entry,
+                    hasChanges: !!changes,
+                    hasValue: !!value,
+                    field: changes?.field,
+                    // Message analysis
+                    hasMessages: !!(value?.messages?.length),
+                    messageCount: value?.messages?.length || 0,
+                    // Status analysis
+                    hasStatuses: !!(value?.statuses?.length),
+                    statusCount: value?.statuses?.length || 0,
+                    // Raw data for debugging
+                    rawStructure: {
+                        object: call.whatsappData?.object,
+                        entryId: entry?.id,
+                        changesField: changes?.field,
+                        valueKeys: value ? Object.keys(value) : [],
+                        messages: value?.messages || [],
+                        statuses: value?.statuses || []
+                    }
+                };
+            }),
+            environment: {
+                verifyToken: process.env.WEBHOOK_VERIFY_TOKEN ? 'Set' : 'Missing',
+                webhookUrl: 'https://quote-whatsapp-ai-chat.vercel.app/webhook'
+            }
         });
         
     } catch (error) {
