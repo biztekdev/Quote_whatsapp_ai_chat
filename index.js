@@ -684,6 +684,43 @@ app.get('/webhook-logs', async (req, res) => {
     }
 });
 
+// Check webhook configuration and recent calls
+app.get('/webhook-config-check', async (req, res) => {
+    try {
+        const recentCalls = await webhookService.getRecentCalls(5);
+        
+        res.json({
+            success: true,
+            webhookUrl: 'https://quote-whatsapp-ai-chat.vercel.app/webhook',
+            verifyToken: process.env.WEBHOOK_VERIFY_TOKEN ? 'Set' : 'Missing',
+            recentCalls: recentCalls.length,
+            lastCall: recentCalls[0]?.receivedAt || 'None',
+            webhookTypes: recentCalls.map(call => ({
+                timestamp: call.receivedAt,
+                hasMessages: !!(call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
+                messageCount: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
+                field: call.whatsappData?.entry?.[0]?.changes?.[0]?.field,
+                webhookType: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.statuses ? 'status' : 'message'
+            })),
+            instructions: {
+                step1: 'Go to WhatsApp Business API Manager',
+                step2: 'Check your webhook configuration',
+                step3: 'Make sure you subscribed to "messages" field',
+                step4: 'Verify webhook URL is correct',
+                step5: 'Test by sending a message from WhatsApp'
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error in webhook-config-check:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to check webhook configuration',
+            details: error.message
+        });
+    }
+});
+
 // Simple debug endpoint to see recent webhook data
 app.get('/debug-webhooks', async (req, res) => {
     try {
