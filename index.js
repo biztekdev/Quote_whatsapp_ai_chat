@@ -409,31 +409,12 @@ async function processMessagesAsync(webhookData, startTime) {
                         }
                     }
                 } else {
-                    await mongoLogger.warn('⚠️ No messages found in webhook data - sending test response', { 
+                    await mongoLogger.warn('⚠️ No messages found in webhook data', { 
                         processingId,
                         webhookData,
                         step: 'NO_MESSAGES_FOUND'
                     });
-                    console.log(`⚠️ [${processingId}] No messages found in webhook data - sending test response`);
-                    
-                    // Send a test response even for empty webhooks
-                    try {
-                        const testMessage = "Hello! I received your webhook but no message was found. This is a test response.";
-                        const result = await whatsappService.sendMessage('923260533337', testMessage, 'text');
-                        console.log(`📤 [${processingId}] Test response sent for empty webhook:`, result);
-                        await mongoLogger.info('Test response sent for empty webhook', {
-                            processingId,
-                            result,
-                            step: 'EMPTY_WEBHOOK_RESPONSE'
-                        });
-                    } catch (error) {
-                        console.error(`❌ [${processingId}] Error sending test response:`, error);
-                        await mongoLogger.error('Error sending test response for empty webhook', {
-                            processingId,
-                            error: error.message,
-                            step: 'EMPTY_WEBHOOK_RESPONSE_ERROR'
-                        });
-                    }
+                    console.log(`⚠️ [${processingId}] No messages found in webhook data - skipping (likely status update)`);
                 }
             } else {
                 await mongoLogger.warn('⚠️ No changes found in webhook data', { 
