@@ -187,17 +187,24 @@ const processedMessageIds = new Set();
 // Async function to process messages without blocking webhook response
 async function processMessagesAsync(webhookData, startTime) {
     try {
+        console.log('🔍 Starting processMessagesAsync with data:', JSON.stringify(webhookData, null, 2));
+        
         // Check if this is a valid WhatsApp webhook with messages
         if (webhookData.entry && webhookData.entry.length > 0) {
+            console.log('✅ Found entry data');
             const entry = webhookData.entry[0];
             if (entry.changes && entry.changes.length > 0) {
+                console.log('✅ Found changes data');
                 const change = entry.changes[0];
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
+                    console.log(`✅ Found ${change.value.messages.length} messages to process`);
                     // Process each message in the webhook
                     for (const message of change.value.messages) {
                         const messageId = message.id;
                         const from = message.from;
                         const messageType = message.type;
+                        
+                        console.log(`🔄 Processing message: ${messageId} from ${from} type ${messageType}`);
                         
                         await mongoLogger.info('Processing individual message', { 
                             messageId, 
@@ -207,6 +214,7 @@ async function processMessagesAsync(webhookData, startTime) {
                         
                         // Check if message has already been processed (in-memory check first)
                         if (processedMessageIds.has(messageId)) {
+                            console.log(`⏭️ Message ${messageId} already processed (memory), skipping`);
                             await mongoLogger.info('Message already processed (memory), skipping', { 
                                 messageId, 
                                 from, 
@@ -269,15 +277,25 @@ async function processMessagesAsync(webhookData, startTime) {
                         }
                         
                         // Process the message
-                        const result = await messageHandler.handleIncomingMessage(message);
+                        console.log(`🚀 About to call messageHandler.handleIncomingMessage for ${messageId}`);
+                        try {
+                            const result = await messageHandler.handleIncomingMessage(message);
+                            console.log(`✅ Successfully processed message ${messageId}:`, result);
+                        } catch (messageError) {
+                            console.error(`❌ Error processing message ${messageId}:`, messageError);
+                            throw messageError;
+                        }
                     }
                 } else {
+                    console.log('⚠️ No messages found in webhook data');
                     await mongoLogger.info('Webhook received but no messages found', { webhookData });
                 }
             } else {
+                console.log('⚠️ No changes found in webhook data');
                 await mongoLogger.info('Webhook received but no changes found', { webhookData });
             }
         } else {
+            console.log('⚠️ No entries found in webhook data');
             await mongoLogger.info('Webhook received but no entries found', { webhookData });
         }
         
@@ -303,11 +321,16 @@ app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     
     try {
+        // Log incoming webhook immediately
+        console.log('📨 Webhook received:', JSON.stringify(req.body, null, 2));
+        
         // IMMEDIATELY respond to WhatsApp to prevent retries
         res.status(200).json({
             status: 'ok',
             timestamp: new Date().toISOString()
         });
+        
+        console.log('✅ Immediate response sent to WhatsApp');
         
         // Force refresh connection status before logging webhook
         await mongoLogger.refreshConnection();
@@ -316,16 +339,23 @@ app.post('/webhook', async (req, res) => {
         // Extract message from webhook payload
         const webhookData = req.body;
         
+        console.log('🔄 Starting async message processing...');
+        
         // Process messages asynchronously (don't await - fire and forget)
         processMessagesAsync(webhookData, startTime).catch(error => {
+            console.error('❌ Error in async processing:', error);
             mongoLogger.logError(error, { 
                 source: 'webhook-async-processing',
                 webhookData: req.body 
+            }).catch(logError => {
+                console.error('Failed to log error:', logError);
             });
         });
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
+        
+        console.error('❌ Webhook error:', error);
         
         // Log the error
         await mongoLogger.logError(error, { 
@@ -343,6 +373,42 @@ app.post('/webhook', async (req, res) => {
                 timestamp: new Date().toISOString()
             });
         }
+    }
+});
+
+// Test endpoint to verify message processing
+app.post('/test-message-processing', async (req, res) => {
+    try {
+        const testMessage = {
+            id: 'test_' + Date.now(),
+            from: '923260533337',
+            type: 'text',
+            text: {
+                body: 'Hello test message'
+            }
+        };
+        
+        console.log('🧪 Testing message handler with:', testMessage);
+        
+        const result = await messageHandler.handleIncomingMessage(testMessage);
+        
+        console.log('✅ Test message processed successfully:', result);
+        
+        res.json({
+            success: true,
+            message: 'Message handler working correctly',
+            testMessage,
+            result
+        });
+        
+    } catch (error) {
+        console.error('❌ Test message processing failed:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Message handler test failed',
+            details: error.message,
+            stack: error.stack
+        });
     }
 });
 
