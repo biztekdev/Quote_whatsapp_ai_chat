@@ -2,6 +2,10 @@ import dotenv from 'dotenv';
 import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
 import mongoLogger from '../services/mongoLogger.js';
+import { Product, ProductCategory } from '../models/productModel.js';
+import { Material } from '../models/materialModel.js';
+import { ProductFinish } from '../models/finishModel.js';
+
 
 dotenv.config();
 
@@ -26,7 +30,6 @@ class MessageHandler {
             await mongoLogger.info('Processing message type', { messageType });
             switch (messageType) {
                 case 'text':
-                    await mongoLogger.info('Handling text message');
                     await this.handleTextMessage(message, from);
                     break;
                 case 'image':
@@ -62,49 +65,114 @@ class MessageHandler {
             const messageText = message.text.body;
             await mongoLogger.info('Text message content', { messageText });
 
+            // Check if user wants to start a new quote
+            const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
+            const wantsNewQuote = newQuoteKeywords.some(keyword => 
+                messageText.toLowerCase().includes(keyword.toLowerCase())
+            );
+
+            if (wantsNewQuote) {
+                console.log("User wants new quote, resetting conversation");
+                await mongoLogger.info('User requested new quote, resetting conversation', { from, messageText });
+                
+                // Reset conversation to start fresh
+                await conversationService.resetConversation(from);
+                
+                // Send greeting response for new conversation
+                await this.handleGreetingResponse(messageText, from);
+                return;
+            }
+
             // Get current conversation state
-            const conversationState = await conversationService.getConversationState(from);
-            console.log('conversationState', conversationState);
-            
+            let conversationState = await conversationService.getConversationState(from);
+
             // Process message with Wit.ai first
             const witResponse = await this.witService.processMessage(messageText);
-            const entities = this.witService.extractEntities(witResponse.data);
-            
-            await mongoLogger.info('Wit.ai response', { 
-                entities: entities,
-                messageText: messageText 
-            });
+            console.log("witResponse111111111 ", witResponse);
 
             // Extract and update conversation data with entities
             const updatedConversationData = await this.extractAndUpdateConversationData(
-                entities, 
+                witResponse.data.entities,
                 conversationState.conversationData || {}
             );
 
+
+            // Special case: If this is the first message and we have selectedCategory, bypass greeting
+            if (conversationState.currentStep === 'start' && updatedConversationData.selectedCategory) {
+                console.log("Bypassing greeting - user provided product info in first message");
+                updatedConversationData.wantsQuote = true;
+            }
+
             // Check if we can bypass steps based on extracted data
             const nextStep = await this.determineNextStep(
-                conversationState.currentStep, 
-                updatedConversationData, 
-                entities
+                conversationState.currentStep,
+                updatedConversationData,
+                witResponse.data.entities
             );
-
             // Update conversation state with extracted data
             if (Object.keys(updatedConversationData).length > 0) {
-                await conversationService.updateConversationState(from, {
+                const _sss = await conversationService.updateConversationState(from, {
                     conversationData: updatedConversationData,
                     currentStep: nextStep
                 });
+                // Get the updated conversation state for processing
+                conversationState = await conversationService.getConversationState(from);
             }
-
             // Process message through our conversation flow
             await this.processConversationFlow(messageText, from, conversationState);
-            
+
         } catch (error) {
-            await mongoLogger.logError(error, { source: 'text-message-handler' });
-            await this.whatsappService.sendMessage(
-                from,
-                "Sorry, I encountered an error processing your message. Please try again."
-            );
+            console.error('Error in handleTextMessage:', error);
+            await mongoLogger.logError(error, {
+                source: 'text-message-handler',
+                from: from,
+                messageText: messageText || 'unknown'
+            });
+
+            try {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I encountered an error processing your message. Please try again or type 'hi' to restart."
+                );
+            } catch (sendError) {
+                console.error('Error sending error message to user:', sendError);
+                await mongoLogger.logError(sendError, {
+                    source: 'error-message-sender',
+                    from: from
+                });
+            }
+        }
+    }
+
+    /**
+     * Parse dimension values from string with various separators
+     */
+    parseDimensionValues(dimensionString) {
+        try {
+            if (!dimensionString || typeof dimensionString !== 'string') {
+                return [];
+            }
+
+            // Replace common separators with comma and clean the string
+            let cleanedString = dimensionString
+                .replace(/[x×]/gi, ',')  // Replace x or × with comma
+                .replace(/\s+/g, ',')    // Replace spaces with comma
+                .replace(/[,\s]+/g, ',') // Replace multiple commas/spaces with single comma
+                .replace(/^,|,$/g, '');  // Remove leading/trailing commas
+
+            // Split by comma and parse numbers
+            const values = cleanedString
+                .split(',')
+                .map(val => val.trim())
+                .filter(val => val !== '')
+                .map(val => parseFloat(val))
+                .filter(val => !isNaN(val));
+
+            console.log(`Parsed dimensions from "${dimensionString}":`, values);
+            return values;
+        } catch (error) {
+            console.error('Error parsing dimension values:', error);
+            return [];
         }
     }
 
@@ -112,68 +180,207 @@ class MessageHandler {
      * Extract entities from Wit.ai response and update conversation data
      */
     async extractAndUpdateConversationData(entities, currentConversationData) {
-        const updatedData = { ...currentConversationData };
+        try {
+            const updatedData = { ...currentConversationData };
+            console.log("Processing entities:", entities);
 
-        for (const entity of entities) {
-            console.log("entity....... ", entity);
-            const { entity: entityName, value, confidence } = entity;
-            
-            switch (entityName) {
-                case 'category:category':
-                    if (value && confidence > 0.5) {
-                        // Search for category in ProductCategory schema
-                        const foundCategory = await this.findCategoryByName(value);
-                        if (foundCategory) {
-                            updatedData.selectedCategory = {
-                                id: foundCategory._id.toString(),
-                                erp_id: foundCategory.erp_id,
-                                name: foundCategory.name,
-                                description: foundCategory.description
-                            };
-                        } else {
-                            updatedData.requestedCategory = value;
+            // Define processing order for entities
+            const customOrder = [
+                "category:category",
+                "product:product",
+                "dimensions:dimensions",
+                "material:material",
+                "finishes:finishes",
+                "quantities:quantities"
+            ];
+
+            // Sort entities based on custom order
+            const sortedEntityEntries = Object.entries(entities).sort(([a], [b]) => {
+                const indexA = customOrder.indexOf(a);
+                const indexB = customOrder.indexOf(b);
+
+                // If both are in custom order, sort by their position
+                if (indexA !== -1 && indexB !== -1) {
+                    return indexA - indexB;
+                }
+                // If only A is in custom order, A comes first
+                if (indexA !== -1) {
+                    return -1;
+                }
+                // If only B is in custom order, B comes first
+                if (indexB !== -1) {
+                    return 1;
+                }
+                // If neither is in custom order, maintain original order
+                return 0;
+            });
+
+            // Process each entity type in sorted order
+            for (const [entityType, entityArray] of sortedEntityEntries) {
+                console.log(`Processing entity type: ${entityType}`, entityArray);
+
+                for (const entity of entityArray) {
+                    try {
+                        const { value, confidence, body } = entity;
+                        console.log(`Entity: ${entityType}`, { value, confidence, body });
+
+                        if (confidence > 0.5) {
+                            switch (entityType) {
+                                case 'category:category':
+                                    // Search for category in ProductCategory schema
+                                    const foundCategory = await this.findCategoryByName(value || body);
+                                    if (foundCategory) {
+                                        updatedData.selectedCategory = {
+                                            id: foundCategory._id.toString(),
+                                            erp_id: foundCategory.erp_id,
+                                            name: foundCategory.name,
+                                            description: foundCategory.description
+                                        };
+                                        console.log("Found category:", foundCategory.name);
+                                    } else {
+                                        updatedData.requestedCategory = value || body;
+                                        console.log("Category not found, stored as requested:", value || body);
+                                    }
+                                    break;
+
+                                case 'product:product':
+                                    // Search for product in Product schema
+                                    const foundProduct = await this.findProductByName(value || body, updatedData);
+                                    if (foundProduct) {
+                                        updatedData.selectedProduct = {
+                                            id: foundProduct._id.toString(),
+                                            erp_id: foundProduct.erp_id,
+                                            name: foundProduct.name,
+                                            description: foundProduct.description,
+                                            basePrice: foundProduct.basePrice
+                                        };
+                                        const foundCategory = await this.findCategoryById(foundProduct.categoryId);
+                                        if (foundCategory) {
+                                            updatedData.selectedCategory = {
+                                                id: foundCategory._id.toString(),
+                                                erp_id: foundCategory.erp_id,
+                                                name: foundCategory.name,
+                                                description: foundCategory.description
+                                            };
+                                        }
+                                    } else {
+                                        updatedData.requestedProductName = value || body;
+                                        console.log("Product not found, stored as requested:", value || body);
+                                    }
+                                    break;
+
+                                case 'dimensions:dimensions':
+                                    const dimensions = value || body;
+
+                                    // Parse dimension values from the string
+                                    const dimensionValues = this.parseDimensionValues(dimensions);
+
+                                    console.log("dimensions111111 ", dimensionValues);
+                                    // Check if we have a selected product
+                                    if (updatedData.selectedProduct && updatedData.selectedProduct.id) {
+                                        try {
+                                            // Get the product with dimension fields
+                                            const product = await conversationService.getProductById(updatedData.selectedProduct.id);
+
+                                            if (product && product.dimensionFields && dimensionValues.length > 0) {
+                                                // Initialize dimensions array if not exists
+                                                if (!updatedData.dimensions) {
+                                                    updatedData.dimensions = [];
+                                                }
+
+                                                // Map dimension values to product dimension fields
+                                                product.dimensionFields.forEach((field, index) => {
+                                                    if (dimensionValues[index] !== undefined) {
+                                                        // Check if dimension already exists
+                                                        const existingDimension = updatedData.dimensions.find(d => d.name === field.name);
+                                                        if (!existingDimension) {
+                                                            updatedData.dimensions.push({
+                                                                name: field.name,
+                                                                value: dimensionValues[index]
+                                                            });
+                                                            console.log("Added dimension:", field.name, "=", dimensionValues[index]);
+                                                        }
+                                                    }
+                                                });
+
+                                                console.log("Final dimensions array:", updatedData.dimensions);
+                                            } else {
+                                                console.log("No product dimension fields or no valid dimension values found");
+                                            }
+                                        } catch (error) {
+                                            console.error("Error processing dimensions:", error);
+                                        }
+                                    } else {
+                                        console.log("No selected product found, skipping dimension processing");
+                                    }
+                                    break;
+                                case 'finishes:finishes':
+                                    const finishes = value || body;
+                                    const findFinish = await this.findFinishByName(finishes);
+                                    if (findFinish) {
+                                        // Initialize selectedFinish array if it doesn't exist
+                                        if (!updatedData.selectedFinish) {
+                                            updatedData.selectedFinish = [];
+                                        }
+                                        // Check if finish already exists to avoid duplicates
+                                        const finishExists = updatedData.selectedFinish.some(f => f._id === findFinish._id.toString());
+                                        if (!finishExists) {
+                                            // Push only _id and name
+                                            updatedData.selectedFinish.push({
+                                                _id: findFinish.erp_id.toString(),
+                                                name: findFinish.name
+                                            });
+                                        }
+                                    }
+                                    break;
+                                case 'material:material':
+                                    const material = value || body;
+                                    const findMaterial = await this.findMaterialByName(material);
+                                    if (findMaterial) {
+                                        updatedData.selectedMaterial = {
+                                            _id: findMaterial.erp_id.toString(),
+                                            name: findMaterial.name,
+                                        };
+                                        console.log("Found material:", findMaterial.name);
+                                    } else {
+                                        console.log("Material not found:", material);
+                                    }
+                                    break;
+                                case 'quantities:quantities':
+                                    const quantity = value || body;
+                                    if (!updatedData.quantity) {
+                                        updatedData.quantity = [];
+                                    }
+                                    // Convert to number for comparison
+                                    const quantityNum = parseInt(quantity);
+                                    if (!isNaN(quantityNum) && !updatedData.quantity.includes(quantityNum)) {
+                                        updatedData.quantity.push(quantityNum);
+                                    }
+                                    break;
+                            }
                         }
+                    } catch (entityError) {
+                        console.error(`Error processing entity ${entityType}:`, entityError);
+                        await mongoLogger.logError(entityError, {
+                            source: 'entity-processor',
+                            entityType: entityType,
+                            entity: entity
+                        });
+                        // Continue processing other entities
                     }
-                    break;
-                case 'dimensions:dimensions':
-                    if (value && confidence > 0.5) {
-                        if (!updatedData.dimensions) {
-                            updatedData.dimensions = [];
-                        }
-                        // Add dimension if not already present
-                        const existingDimension = updatedData.dimensions.find(d => d.name === value.name);
-                        if (!existingDimension) {
-                            updatedData.dimensions.push({
-                                name: value.name,
-                                value: value.value
-                            });
-                        }
-                    }
-                    break;
-                case 'quantity':
-                    if (value && confidence > 0.5) {
-                        updatedData.quantity = parseInt(value);
-                    }
-                    break;
-                case 'material':
-                    if (value && confidence > 0.5) {
-                        updatedData.selectedMaterial = value;
-                    }
-                    break;
-                case 'finish':
-                    if (value && confidence > 0.5) {
-                        updatedData.selectedFinish = value;
-                    }
-                    break;
-                case 'category':
-                    if (value && confidence > 0.5) {
-                        updatedData.requestedCategory = value;
-                    }
-                    break;
+                }
             }
-        }
 
-        return updatedData;
+            return updatedData;
+        } catch (error) {
+            console.error('Error in extractAndUpdateConversationData:', error);
+            await mongoLogger.logError(error, {
+                source: 'extract-conversation-data',
+                entities: entities
+            });
+            // Return original data if extraction fails
+            return currentConversationData;
+        }
     }
 
     /**
@@ -182,21 +389,21 @@ class MessageHandler {
     async findCategoryByName(categoryName) {
         try {
             const categories = await conversationService.getProductCategories();
-            
+
             // Search in name field
-            let foundCategory = categories.find(cat => 
+            let foundCategory = categories.find(cat =>
                 cat.name.toLowerCase().includes(categoryName.toLowerCase())
             );
-            
+
             // If not found in name, search in sub_names
             if (!foundCategory) {
-                foundCategory = categories.find(cat => 
-                    cat.sub_names && cat.sub_names.some(subName => 
+                foundCategory = categories.find(cat =>
+                    cat.sub_names && cat.sub_names.some(subName =>
                         subName.toLowerCase().includes(categoryName.toLowerCase())
                     )
                 );
             }
-            
+
             return foundCategory;
         } catch (error) {
             console.error('Error finding category by name:', error);
@@ -205,86 +412,287 @@ class MessageHandler {
     }
 
     /**
+     * Find category by ID in ProductCategory schema
+     */
+    async findCategoryById(categoryId) {
+        try {
+            // Convert ObjectId to string if needed
+            const categoryIdString = categoryId.toString();
+            console.log("categoryIdString ", categoryIdString);
+            const category = await ProductCategory.findById(categoryIdString);
+            return category;
+        } catch (error) {
+            console.error('Error finding category by ID:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Find product by name in Product schema
+     */
+    async findProductByName(productName, conversationData = {}) {
+        try {
+            // Search all active products
+            const products = await Product.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+
+            // Search in name field
+            let foundProduct = products.find(product =>
+                product.name.toLowerCase().includes(productName.toLowerCase())
+            );
+
+            // If not found in name, search in description
+            if (!foundProduct) {
+                foundProduct = products.find(product =>
+                    product.description && product.description.toLowerCase().includes(productName.toLowerCase())
+                );
+            }
+
+            // If not found in description, search in erp_id
+            if (!foundProduct) {
+                const erpId = parseInt(productName);
+                if (!isNaN(erpId)) {
+                    foundProduct = products.find(product => product.erp_id === erpId);
+                }
+            }
+
+            return foundProduct;
+        } catch (error) {
+            console.error('Error finding product by name:', error);
+            return null;
+        }
+    }
+
+    async findFinishByName(finishName) {
+        try {
+            // Search all active finishes
+            const finishes = await ProductFinish.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            
+            // Search in name field
+            let foundFinish = finishes.find(finish =>
+                finish.name.toLowerCase().includes(finishName.toLowerCase())
+            );
+            
+            // If not found in name, search in description
+            if (!foundFinish) {
+                foundFinish = finishes.find(finish =>
+                    finish.description && finish.description.toLowerCase().includes(finishName.toLowerCase())
+                );
+            }
+            
+            // If not found in description, search in erp_id
+            if (!foundFinish) {
+                const erpId = parseInt(finishName);
+                if (!isNaN(erpId)) {
+                    foundFinish = finishes.find(finish => finish.erp_id === erpId);
+                }
+            }
+            
+            return foundFinish;
+        } catch (error) {
+            console.error('Error finding finish by name:', error);
+            return null;
+        }
+    }
+
+    async findMaterialByName(materialName) {
+        try {
+            // Search all active materials
+            const materials = await Material.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            
+            // Search in name field
+            let foundMaterial = materials.find(material =>
+                material.name.toLowerCase().includes(materialName.toLowerCase())
+            );
+            
+            // If not found in name, search in description
+            if (!foundMaterial) {
+                foundMaterial = materials.find(material =>
+                    material.description && material.description.toLowerCase().includes(materialName.toLowerCase())
+                );
+            }
+            
+            // If not found in description, search in erp_id
+            if (!foundMaterial) {
+                const erpId = parseInt(materialName);
+                if (!isNaN(erpId)) {
+                    foundMaterial = materials.find(material => material.erp_id === erpId);
+                }
+            }
+            
+            return foundMaterial;
+        } catch (error) {
+            console.error('Error finding material by name:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Check if a step should be bypassed based on available data
+     */
+    shouldBypassStep(step, conversationData) {
+        switch (step) {
+            case 'category_selection':
+                return conversationData.selectedCategory || conversationData.requestedCategory;
+
+            case 'product_selection':
+                return conversationData.selectedProduct || conversationData.requestedProductName;
+
+            case 'dimension_input':
+                return conversationData.dimensions && conversationData.dimensions.length > 0;
+
+            case 'material_selection':
+                return conversationData.selectedMaterial && conversationData.selectedMaterial.name;
+
+            case 'finish_selection':
+                return conversationData.selectedFinish && conversationData.selectedFinish.length > 0;
+
+            case 'quantity_input':
+                return conversationData.quantity && conversationData.quantity.length > 0;
+
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Get the next step after bypassing current step
+     */
+    getNextStepAfterBypass(currentStep, conversationData) {
+        // If we have all required data, go to quote generation
+        if (conversationData.selectedProduct &&
+            conversationData.dimensions &&
+            conversationData.dimensions.length > 0 &&
+            conversationData.selectedMaterial &&
+            conversationData.selectedMaterial.name &&
+            conversationData.selectedFinish &&
+            conversationData.selectedFinish.length > 0 &&
+            conversationData.quantity &&
+            conversationData.quantity.length > 0) {
+            return 'quote_generation';
+        }
+
+        // Otherwise, move to the next logical step
+        switch (currentStep) {
+            case 'category_selection':
+                return conversationData.selectedProduct ? 'dimension_input' : 'product_selection';
+
+            case 'product_selection':
+                return 'dimension_input';
+
+            case 'dimension_input':
+                return 'material_selection';
+
+            case 'material_selection':
+                return 'finish_selection';
+
+            case 'finish_selection':
+                return 'quantity_input';
+
+            case 'quantity_input':
+                return 'quote_generation';
+
+            default:
+                return currentStep;
+        }
+    }
+
+    /**
      * Determine the next step based on current step and extracted data
      */
     async determineNextStep(currentStep, conversationData, entities) {
-        // If we have a selected category and product name, move to dimension_input
-        if (conversationData.selectedCategory && conversationData.requestedProductName) {
-            return 'dimension_input';
+        // Special case: If we're in 'start' step and have selectedCategory, go to product_selection
+        if (currentStep === 'start' && conversationData.selectedCategory) {
+            return 'product_selection';
         }
 
-        // If we're in product_selection and have product name, move to dimension_input
-        if (currentStep === 'product_selection' && conversationData.requestedProductName) {
-            return 'dimension_input';
-        }
-
-        // If we're in dimension_input and have dimensions, move to material_selection
-        if (currentStep === 'dimension_input' && conversationData.dimensions && conversationData.dimensions.length > 0) {
-            return 'material_selection';
-        }
-
-        // If we're in material_selection and have material, move to finish_selection
-        if (currentStep === 'material_selection' && conversationData.selectedMaterial) {
-            return 'finish_selection';
-        }
-
-        // If we're in finish_selection and have finish, move to quantity_input
-        if (currentStep === 'finish_selection' && conversationData.selectedFinish) {
-            return 'quantity_input';
-        }
-
-        // If we're in quantity_input and have quantity, move to quote_generation
-        if (currentStep === 'quantity_input' && conversationData.quantity) {
-            return 'quote_generation';
-        }
-
-        // If we have all required data, move to quote_generation
-        if (conversationData.selectedProduct && 
-            conversationData.dimensions && 
-            conversationData.dimensions.length > 0 && 
-            conversationData.selectedMaterial && 
-            conversationData.selectedFinish && 
-            conversationData.quantity) {
-            return 'quote_generation';
+        // Use the bypassing logic to determine next step
+        if (this.shouldBypassStep(currentStep, conversationData)) {
+            return this.getNextStepAfterBypass(currentStep, conversationData);
         }
 
         return currentStep; // Keep current step if no advancement possible
     }
 
     async processConversationFlow(messageText, from, conversationState) {
+        console.log("processConversationFlow ", messageText, from, conversationState);
         try {
             const currentStep = conversationState.currentStep;
             const conversationData = conversationState.conversationData || {};
 
             await mongoLogger.info('Processing conversation step', { currentStep, from });
 
-            switch (currentStep) {
-                case 'start':
-                    await this.handleStartStep(messageText, from);
-                    break;
-                case 'greeting_response':
-                    await this.handleGreetingResponse(messageText, from);
-                    break;
-                case 'category_selection':
-                    await this.handleCategorySelection(messageText, from);
-                    break;
-                case 'product_selection':
-                    await this.handleProductSelection(messageText, from);
-                    break;
-                case 'dimension_input':
-                    await this.handleDimensionInput(messageText, from, conversationData);
-                    break;
-                case 'material_selection':
-                    await this.handleMaterialSelection(messageText, from, conversationData);
-                    break;
-                case 'finish_selection':
-                    await this.handleFinishSelection(messageText, from, conversationData);
-                    break;
-                case 'quantity_input':
-                    await this.handleQuantityInput(messageText, from, conversationData);
-                    break;
-                default:
-                    await this.handleStartStep(messageText, from);
+            // Check if current step should be bypassed
+            if (this.shouldBypassStep(currentStep, conversationData)) {
+                await mongoLogger.info(`Bypassing step: ${currentStep}`, {
+                    from,
+                    conversationData: Object.keys(conversationData)
+                });
+
+                const nextStep = this.getNextStepAfterBypass(currentStep, conversationData);
+
+                // Update conversation state to next step
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Recursively process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                return await this.processConversationFlow(messageText, from, updatedState);
+            }
+            
+            try {
+                switch (currentStep) {
+                    case 'start':
+                        await this.handleStartStep(messageText, from);
+                        break;
+                    case 'greeting_response':
+                        await this.handleGreetingResponse(messageText, from);
+                        break;
+                    case 'category_selection':
+                        await this.handleCategorySelection(messageText, from);
+                        break;
+                    case 'product_selection':
+                        await this.handleProductSelection(messageText, from);
+                        break;
+                    case 'dimension_input':
+                        await this.handleDimensionInput(messageText, from, conversationData);
+                        break;
+                    case 'material_selection':
+                        await this.handleMaterialSelection(messageText, from, conversationData);
+                        break;
+                    case 'finish_selection':
+                        await this.handleFinishSelection(messageText, from, conversationData);
+                        break;
+                    case 'quantity_input':
+                        await this.handleQuantityInput(messageText, from, conversationData);
+                        break;
+                    case 'quote_generation':
+                        await this.handleQuoteGeneration(messageText, from, conversationData);
+                        break;
+                    default:
+                        console.log(`Unknown step: ${currentStep}, defaulting to start step`);
+                        await this.handleStartStep(messageText, from);
+                }
+            } catch (stepError) {
+                console.error(`Error in step ${currentStep}:`, stepError);
+                await mongoLogger.logError(stepError, {
+                    source: 'conversation-step-handler',
+                    step: currentStep,
+                    from: from,
+                    messageText: messageText
+                });
+
+                // Send user-friendly error message
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I encountered an error processing your request. Let me start over."
+                );
+
+                // Reset conversation to start step
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'start',
+                    conversationData: {}
+                });
             }
         } catch (error) {
             await mongoLogger.logError(error, { source: 'conversation-flow' });
@@ -347,7 +755,7 @@ Would you like to get a quote for mylar bags today?`;
     async handleGreetingResponse(messageText, from) {
         const response = messageText.toLowerCase().trim();
         console.log('Message response ', response);
-        
+
         if (response.includes('yes') || response === 'quote_yes' || response.includes('get quote')) {
             await conversationService.updateConversationState(from, {
                 currentStep: 'category_selection',
@@ -375,7 +783,7 @@ Would you like to get a quote for mylar bags today?`;
     async sendCategorySelection(from) {
         try {
             const categories = await conversationService.getProductCategories();
-            
+
             if (!categories || categories.length === 0) {
                 await this.whatsappService.sendMessage(
                     from,
@@ -396,9 +804,9 @@ Would you like to get a quote for mylar bags today?`;
             const bodyText = `Perfect! 🎯 Let's start by selecting the category that best fits your needs. Which category are you interested in?`;
             console.log('sections ', sections);
             await this.whatsappService.sendListMessage(
-                from, 
-                bodyText, 
-                "Select Category", 
+                from,
+                bodyText,
+                "Select Category",
                 sections
             );
         } catch (error) {
@@ -412,43 +820,43 @@ Would you like to get a quote for mylar bags today?`;
 
     async handleCategorySelection(messageText, from) {
         // try {
-            const categories = await conversationService.getProductCategories();
-            
-            if (!categories || categories.length === 0) {
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, no product categories are available at the moment. Please try again later."
-                );
-                return;
-            }
+        const categories = await conversationService.getProductCategories();
 
-            let selectedCategory = null;
-
-            // Check if it's a direct category ERP ID or find by name
-            selectedCategory = categories.find(c => 
-                c.erp_id.toString() === messageText || 
-                c.name.toLowerCase().includes(messageText.toLowerCase())
+        if (!categories || categories.length === 0) {
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, no product categories are available at the moment. Please try again later."
             );
-            console.log('Selected category ', selectedCategory);
+            return;
+        }
 
-            if (selectedCategory) {
-                await conversationService.updateConversationState(from, {
-                    currentStep: 'product_selection',
-                    'conversationData.selectedCategory': {
-                        id: selectedCategory._id,
-                        erp_id: selectedCategory.erp_id,
-                        name: selectedCategory.name,
-                        description: selectedCategory.description
-                    }
-                });
+        let selectedCategory = null;
 
-                await this.sendProductSelection(from);
-            } else {
-                await this.whatsappService.sendMessage(
-                    from,
-                    "I didn't quite catch that. Please select a category from the list above or type the category name."
-                );
-            }
+        // Check if it's a direct category ERP ID or find by name
+        selectedCategory = categories.find(c =>
+            c.erp_id.toString() === messageText ||
+            c.name.toLowerCase().includes(messageText.toLowerCase())
+        );
+        console.log('Selected category ', selectedCategory);
+
+        if (selectedCategory) {
+            await conversationService.updateConversationState(from, {
+                currentStep: 'product_selection',
+                'conversationData.selectedCategory': {
+                    id: selectedCategory._id,
+                    erp_id: selectedCategory.erp_id,
+                    name: selectedCategory.name,
+                    description: selectedCategory.description
+                }
+            });
+
+            await this.sendProductSelection(from);
+        } else {
+            await this.whatsappService.sendMessage(
+                from,
+                "I didn't quite catch that. Please select a category from the list above or type the category name."
+            );
+        }
         // } catch (error) {
         //     await mongoLogger.logError(error, { source: 'handle-category-selection' });
         //     await this.whatsappService.sendMessage(
@@ -460,35 +868,35 @@ Would you like to get a quote for mylar bags today?`;
 
     async sendProductSelection(from) {
         // try {
-            // Get conversation state to access selected category
-            const conversationState = await conversationService.getConversationState(from);
-            const selectedCategory = conversationState.conversationData?.selectedCategory;
-            console.log('Selected category ', selectedCategory);
-            
-            if (!selectedCategory || !selectedCategory.id) {
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
-                );
-                return;
-            }
+        // Get conversation state to access selected category
+        const conversationState = await conversationService.getConversationState(from);
+        const selectedCategory = conversationState.conversationData?.selectedCategory;
+        console.log('Selected category ', selectedCategory);
 
-            // Get products by category ID to validate against
-            const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
-            
-            if (!allProducts || allProducts.length === 0) {
-                await this.whatsappService.sendMessage(
-                    from,
-                    `Sorry, no products are available in the ${selectedCategory.name} category at the moment. Please try another category.`
-                );
-                return;
-            }
+        if (!selectedCategory || !selectedCategory.id) {
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+            );
+            return;
+        }
 
-            const bodyText = `Great! 📦 You've selected the ${selectedCategory.name} category.
+        // Get products by category ID to validate against
+        const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
+
+        if (!allProducts || allProducts.length === 0) {
+            await this.whatsappService.sendMessage(
+                from,
+                `Sorry, no products are available in the ${selectedCategory.name} category at the moment. Please try another category.`
+            );
+            return;
+        }
+
+        const bodyText = `Great! 📦 You've selected the ${selectedCategory.name} category.
 
 What is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
-            
-            await this.whatsappService.sendMessage(from, bodyText);
+
+        await this.whatsappService.sendMessage(from, bodyText);
         // } catch (error) {
         //     await mongoLogger.logError(error, { source: 'send-product-selection' });
         //     await this.whatsappService.sendMessage(
@@ -504,7 +912,7 @@ What is the name of the product you're looking for? Please type the product name
             const conversationState = await conversationService.getConversationState(from);
             const selectedCategory = conversationState.conversationData?.selectedCategory;
             const requestedProductName = conversationState.conversationData?.requestedProductName;
-            
+
             if (!selectedCategory || !selectedCategory.id) {
                 await this.whatsappService.sendMessage(
                     from,
@@ -521,8 +929,8 @@ What is the name of the product you're looking for? Please type the product name
             const searchTerm = requestedProductName || messageText;
 
             // Check if it's a direct product ERP ID or find by name
-            selectedProduct = products.find(p => 
-                p.erp_id.toString() === searchTerm || 
+            selectedProduct = products.find(p =>
+                p.erp_id.toString() === searchTerm ||
                 p.name.toLowerCase().includes(searchTerm.toLowerCase())
             );
 
@@ -569,7 +977,7 @@ What is the name of the product you're looking for? Please type the product name
         const dimensionFields = product.dimensionFields || [];
         const dimensionNames = dimensionFields.map(field => field.name).join(', ');
         const dimensionUnits = dimensionFields.map(field => field.unit || 'inches').join(', ');
-        
+
         const message = `Perfect! You selected: *${product.name}* 📏
 
 Now I need the dimensions for your product.
@@ -587,42 +995,76 @@ All dimensions should be in ${dimensionUnits}.`;
     }
 
     async handleDimensionInput(messageText, from, conversationData) {
-        // Process dimensions using Wit.ai
-        const witResponse = await this.witService.processMessage(messageText);
-        const entities = this.witService.extractEntities(witResponse.data);
-        
-        // Try to parse dimensions
-        let dimensions = this.witService.getDimensionsFromEntities(entities);
-        
-        // If Wit.ai didn't parse it, try manual parsing
-        if (!dimensions || dimensions.length === 0) {
-            dimensions = this.parseDimensionsManually(messageText, conversationData.selectedProduct.dimensionNames);
-        }
+        try {
+            // Check if dimensions already exist
+            if (conversationData.dimensions && conversationData.dimensions.length > 0) {
+                console.log("Dimensions already exist, bypassing dimension input step");
 
-        if (dimensions && dimensions.length > 0) {
-            await conversationService.updateConversationState(from, {
-                currentStep: 'material_selection',
-                'conversationData.dimensions': dimensions
-            });
+                // Bypass dimension_input and move to next step
+                const nextStep = this.getNextStepAfterBypass('dimension_input', conversationData);
 
-            await this.sendMaterialSelection(from, conversationData.selectedProduct);
-        } else {
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(messageText, from, updatedState);
+                return;
+            }
+
+            // Check if we have a selected product
+            if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
+                console.log("No selected product, asking for product selection");
+
+                // Check if we have a selected category
+                if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
+                    console.log("No selected category, asking for category selection");
+                    await this.sendCategorySelection(from);
+                    return;
+                } else {
+                    console.log("Have category, asking for product selection");
+                    await this.sendProductSelection(from);
+                    return;
+                }
+            }
+
+            // We have a product, ask for dimensions
+            const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+
+            if (!product || !product.dimensionFields) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, this product doesn't have dimension requirements. Let me help you with the next step."
+                );
+                return;
+            }
+
+            // Ask for dimensions with product-specific dimension names
+            const dimensionNames = product.dimensionFields.map(f => f.name);
+
             await this.whatsappService.sendMessage(
                 from,
-                `I couldn't understand the dimensions. Please provide them in one of these formats:
+                `Please provide the dimensions for your ${product.name}:\n\nRequired dimensions: ${dimensionNames.join(', ')}\n\nYou can provide them in any of these formats:\n• ${dimensionNames.join(' x ')} (e.g., "10 x 8 x 3")\n• Separated by commas (e.g., "10, 8, 3")\n• With labels (e.g., "L:10, W:8, H:3")\n\nAll dimensions should be in inches.`
+            );
+        } catch (error) {
+            console.error('Error in handleDimensionInput:', error);
+            await mongoLogger.logError(error, {
+                source: 'dimension-input-handler',
+                from: from,
+                messageText: messageText
+            });
 
-• ${conversationData.selectedProduct.dimensionNames.join(' x ')} (e.g., "10 x 8 x 3")
-• Separated by commas (e.g., "10, 8, 3")
-• With labels (e.g., "L:10, W:8, H:3")
-
-All dimensions should be in inches.`
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I encountered an error processing your dimensions. Please try again."
             );
         }
     }
 
     async sendMaterialSelection(from, selectedProduct) {
         const product = await conversationService.getProductById(selectedProduct.id);
-        
+
         const sections = [{
             title: "Available Materials",
             rows: product.availableMaterials.map(material => ({
@@ -633,40 +1075,202 @@ All dimensions should be in inches.`
         }];
 
         const bodyText = `Great! Now please select the material for your mylar bags:`;
-        
+
         await this.whatsappService.sendListMessage(
-            from, 
-            bodyText, 
-            "Select Material", 
+            from,
+            bodyText,
+            "Select Material",
             sections
         );
     }
 
-    async handleMaterialSelection(messageText, from, conversationData) {
-        const product = await conversationService.getProductById(conversationData.selectedProduct.id);
-        const selectedMaterial = product.availableMaterials.find(m => 
-            m.name.toLowerCase().includes(messageText.toLowerCase()) ||
-            messageText.toLowerCase().includes(m.name.toLowerCase())
-        );
+    async sendMaterialRequest(from, selectedCategory) {
+        try {
+            const category = await this.findCategoryById(selectedCategory.id);
 
-        if (selectedMaterial) {
-            await conversationService.updateConversationState(from, {
-                currentStep: 'finish_selection',
-                'conversationData.selectedMaterial': selectedMaterial.name
-            });
+            if (!category) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, category not found. Please try again."
+                );
+                return;
+            }
 
-            await this.sendFinishSelection(from, conversationData.selectedProduct);
-        } else {
+            // Fetch materials for this category from Material model
+            const materials = await Material.find({
+                categoryId: selectedCategory.id,
+                isActive: true
+            }).sort({ sortOrder: 1, name: 1 });
+
+            if (!materials || materials.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no materials are available for this category. Please contact support."
+                );
+                return;
+            }
+
             await this.whatsappService.sendMessage(
                 from,
-                "Please select a valid material from the list above."
+                `Great! Now please select the material for your ${category.name} products.\n\nType your material name.`
+            );
+        } catch (error) {
+            console.error('Error in sendMaterialRequest:', error);
+            await mongoLogger.logError(error, {
+                source: 'send-material-request',
+                from: from
+            });
+
+            await this.whatsappService.sendMessage(
+                from,
+                "Please type the name of the material you want to use."
+            );
+        }
+    }
+
+    async sendFinishRequest(from, conversationData) {
+        try {
+            const category = await this.findCategoryById(conversationData.selectedCategory.id);
+
+            if (!category) {
+                await this.sendCategorySelection(from);
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'category_selection'
+                });
+                return;
+            }
+            const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+            console.log("product111111111 ", product);
+
+            if (!product) {
+                await this.sendProductSelection(from);
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'product_selection'
+                });
+                return;
+            }
+
+            // Fetch finishes for this category from ProductFinish model
+            const finishes = await ProductFinish.find({
+                productCategoryId: conversationData.selectedCategory.id,
+                isActive: true
+            }).sort({ sortOrder: 1, name: 1 });
+
+            if (!finishes || finishes.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no finishes are available for this category. Please contact support."
+                );
+                return;
+            }
+
+            await this.whatsappService.sendMessage(
+                from,
+                `Great! Now please select the finishes for your ${product.name} product.\n\nType your finish names.`
+            );
+        } catch (error) {
+            console.error('Error in sendFinishRequest:', error);
+            await mongoLogger.logError(error, {
+                source: 'send-finish-request',
+                from: from
+            });
+
+            await this.whatsappService.sendMessage(
+                from,
+                "Please type the name of the finish you want to use."
+            );
+        }
+    }
+
+    async handleMaterialSelection(messageText, from, conversationData) {
+        try {
+            // If this is the first time in material selection, ask for material
+            if (!conversationData.selectedMaterial) {
+                await this.sendMaterialRequest(from, conversationData.selectedCategory);
+                return;
+            }
+
+            // User has provided material, process it
+            const category = await this.findCategoryById(conversationData.selectedCategory.id);
+
+            if (!category) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, category not found. Please try again."
+                );
+                return;
+            }
+
+            // Fetch materials for this category from Material model
+            const materials = await Material.find({
+                categoryId: conversationData.selectedCategory.id,
+                isActive: true
+            }).sort({ sortOrder: 1, name: 1 });
+
+            if (!materials || materials.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no materials are available for this category. Please try again."
+                );
+                return;
+            }
+
+            // Find matching material
+            const selectedMaterial = materials.find(m =>
+                m.name.toLowerCase().includes(messageText.toLowerCase()) ||
+                messageText.toLowerCase().includes(m.name.toLowerCase())
+            );
+
+            if (selectedMaterial) {
+                console.log("selectedMaterial ", selectedMaterial);
+                // Update conversation data with selected material
+                await conversationService.updateConversationState(from, {
+                    'conversationData.selectedMaterial': {
+                        _id: selectedMaterial.erp_id.toString(),
+                        name: selectedMaterial.name
+                    }
+                });
+
+                // Bypass material_selection and move to next step
+                const nextStep = this.getNextStepAfterBypass('material_selection', {
+                    ...conversationData,
+                    selectedMaterial: {
+                        _id: selectedMaterial.erp_id.toString(),
+                        name: selectedMaterial.name
+                    }
+                });
+
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(messageText, from, updatedState);
+            } else {
+                await this.whatsappService.sendMessage(
+                    from,
+                    `Please type your material name.`
+                );
+            }
+        } catch (error) {
+            console.error('Error in handleMaterialSelection:', error);
+            await mongoLogger.logError(error, {
+                source: 'material-selection-handler',
+                from: from,
+                messageText: messageText
+            });
+
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I encountered an error processing your material selection. Please try again."
             );
         }
     }
 
     async sendFinishSelection(from, selectedProduct) {
         const product = await conversationService.getProductById(selectedProduct.id);
-        
+
         const sections = [{
             title: "Available Finishes",
             rows: product.availableFinishes.map(finish => ({
@@ -677,33 +1281,55 @@ All dimensions should be in inches.`
         }];
 
         const bodyText = `Excellent! Now please select the finish for your mylar bags:`;
-        
+
         await this.whatsappService.sendListMessage(
-            from, 
-            bodyText, 
-            "Select Finish", 
+            from,
+            bodyText,
+            "Select Finish",
             sections
         );
     }
 
     async handleFinishSelection(messageText, from, conversationData) {
-        const product = await conversationService.getProductById(conversationData.selectedProduct.id);
-        const selectedFinish = product.availableFinishes.find(f => 
-            f.name.toLowerCase().includes(messageText.toLowerCase()) ||
-            messageText.toLowerCase().includes(f.name.toLowerCase())
-        );
+        try {
+            // Check if finishes already exist
+            if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+                console.log("Finishes already exist, bypassing finish selection step");
 
-        if (selectedFinish) {
-            await conversationService.updateConversationState(from, {
-                currentStep: 'quantity_input',
-                'conversationData.selectedFinish': selectedFinish.name
+                // Bypass finish_selection and move to next step
+                const nextStep = this.getNextStepAfterBypass('finish_selection', conversationData);
+
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(messageText, from, updatedState);
+                return;
+            }
+
+            // Check if we have a selected product
+            if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
+                console.log("No selected product, asking for product selection");
+                await this.sendProductSelection(from);
+                return;
+            }
+            console.log("sending Finish Request",);
+
+            // We have a product, ask for finishes
+            await this.sendFinishRequest(from, conversationData);
+        } catch (error) {
+            console.error('Error in handleFinishSelection:', error);
+            await mongoLogger.logError(error, {
+                source: 'finish-selection-handler',
+                from: from,
+                messageText: messageText
             });
 
-            await this.sendQuantityRequest(from);
-        } else {
             await this.whatsappService.sendMessage(
                 from,
-                "Please select a valid finish from the list above."
+                "Sorry, I encountered an error processing your finish selection. Please try again."
             );
         }
     }
@@ -724,40 +1350,288 @@ What quantity would you like?`;
     }
 
     async handleQuantityInput(messageText, from, conversationData) {
-        // Process quantity using Wit.ai
-        const witResponse = await this.witService.processMessage(messageText);
-        const entities = this.witService.extractEntities(witResponse.data);
-        
-        let quantity = null;
-        
-        // Try to find quantity entity
-        const quantityEntity = entities.find(e => e.entity === 'quantity:quantity');
-        if (quantityEntity) {
-            quantity = parseInt(quantityEntity.value);
-        } else {
-            // Manual parsing
-            const numbers = messageText.match(/\d+/g);
-            if (numbers && numbers.length > 0) {
-                quantity = parseInt(numbers[0]);
+        try {
+            // Check if quantity already exists
+            if (conversationData.quantity && conversationData.quantity.length > 0) {
+                console.log("Quantity already exists, bypassing quantity input step");
+
+                // Bypass quantity_input and move to next step
+                const nextStep = this.getNextStepAfterBypass('quantity_input', conversationData);
+
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(messageText, from, updatedState);
+                return;
             }
-        }
 
-        if (quantity && quantity > 0) {
-            // Update conversation state with quantity
-            await conversationService.updateConversationState(from, {
-                currentStep: 'quote_generation',
-                'conversationData.quantity': quantity
+            // Check if we have all required data for quote generation
+            if (!conversationData.selectedProduct || !conversationData.selectedMaterial ||
+                !conversationData.selectedFinish || conversationData.selectedFinish.length === 0) {
+                console.log("Missing required data for quote generation");
+
+                // Guide user to complete missing steps
+                if (!conversationData.selectedProduct) {
+                    await this.sendProductSelection(from);
+                    return;
+                }
+                if (!conversationData.selectedMaterial) {
+                    await this.sendMaterialRequest(from, conversationData.selectedCategory);
+                    return;
+                }
+                if (!conversationData.selectedFinish || conversationData.selectedFinish.length === 0) {
+                    await this.sendFinishRequest(from, conversationData);
+                    return;
+                }
+            }
+
+            // We have all required data, ask for quantity
+            await this.sendQuantityRequest(from);
+        } catch (error) {
+            console.error('Error in handleQuantityInput:', error);
+            await mongoLogger.logError(error, {
+                source: 'quantity-input-handler',
+                from: from,
+                messageText: messageText
             });
 
-            // Generate and send quote
-            await this.generateAndSendQuote(from, {
-                ...conversationData,
-                quantity
-            });
-        } else {
             await this.whatsappService.sendMessage(
                 from,
-                "Please provide a valid quantity number. For example: '500' or '1000 pieces'"
+                "Sorry, I encountered an error processing your quantity. Please try again."
+            );
+        }
+    }
+
+    async handleQuoteGeneration(messageText, from, conversationData) {
+        console.log("conversationData111111111 ", conversationData);
+        try {
+            // Check if this is the first time in quote generation (acknowledge selections)
+            if (!conversationData.quoteAcknowledged) {
+                // Format the acknowledgment message
+                const categoryName = conversationData.selectedCategory?.name || 'Not specified';
+                const productName = conversationData.selectedProduct?.name || 'Not specified';
+                const materialName = conversationData.selectedMaterial?.name || 'Not specified';
+
+                // Format finishes
+                const finishNames = conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified';
+
+                // Format dimensions
+                const dimensionsText = conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified';
+
+                // Format quantities
+                const quantitiesText = conversationData.quantity?.join(', ') || 'Not specified';
+
+                const acknowledgmentMessage = `Perfect! 🎯 Let me confirm your selections:
+
+📦 **Category:** ${categoryName}
+🔧 **Product:** ${productName}
+🧱 **Material:** ${materialName}
+✨ **Finishes:** ${finishNames}
+📏 **Dimensions:** ${dimensionsText}
+🔢 **Quantities:** ${quantitiesText}
+
+Based on the information you've provided, would you like me to generate pricing for your quote? 
+
+Please reply with "Yes" to get pricing details, or "No" if you'd like to make any changes.`;
+
+                await this.whatsappService.sendMessage(from, acknowledgmentMessage);
+
+                // Mark as acknowledged and wait for response
+                await conversationService.updateConversationState(from, {
+                    'conversationData.quoteAcknowledged': true
+                });
+
+            } else {
+                // Process user's response to pricing question
+                const response = messageText.toLowerCase().trim();
+
+                if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
+                    // User wants pricing, generate and send quote
+
+                    //if acknowledgement is true then generate and send quote
+                    //and user say yes then give him pricing
+                    const pricing = await this.getPricingForQuote(conversationData);
+                    console.log("pricing111111111 ", pricing);
+
+                    if (pricing && !pricing.error) {
+                        // Store pricing in conversation data
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.pricingData': pricing,
+                            'conversationData.pricing_done': true,
+                            'conversationData.completed': true,
+                            currentStep: 'completed'
+                        });
+
+                        // Send beautiful pricing table
+                        await this.sendPricingTable(from, conversationData, pricing);
+                    } else {
+                        // Handle pricing error
+                        await this.whatsappService.sendMessage(
+                            from,
+                            "Sorry, I couldn't get pricing information at the moment. Please try again later or contact our support team."
+                        );
+                    }
+
+                } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
+                    // User doesn't want pricing, end conversation gracefully
+                    const goodbyeMessage = `No problem! 😊 
+
+I'm always here to help you whenever you need a quote. Just say "Hi" or "Get Quote" anytime you're ready, and I'll be happy to assist you with pricing for your products.
+
+Have a great day! 🌟`;
+
+                    await this.whatsappService.sendMessage(from, goodbyeMessage);
+
+                    // Inactivate conversation
+                    await conversationService.updateConversationState(from, {
+                        currentStep: 'completed',
+                        isActive: false,
+                        'conversationData.completed': true
+                    });
+
+                } else {
+                    // Unclear response, ask for clarification
+                    await this.whatsappService.sendMessage(
+                        from,
+                        "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
+                    );
+                }
+            }
+
+        } catch (error) {
+            console.error('Error in handleQuoteGeneration:', error);
+            await mongoLogger.logError(error, {
+                source: 'quote-generation-handler',
+                from: from,
+                messageText: messageText
+            });
+
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I encountered an error processing your request. Please try again or type 'hi' to restart."
+            );
+        }
+    }
+
+    async getPricingForQuote(conversationData) {
+        try {
+            // Prepare the payload for the pricing API
+            const payload = {
+                file_type: conversationData.selectedCategory?.erp_id?.toString() || "1",
+                product_id: conversationData.selectedProduct?.erp_id || 26,
+                material_id: conversationData.selectedMaterial?._id || 55,
+                finishes: conversationData.selectedFinish?.map(finish => ({
+                    id: parseInt(finish._id),
+                    value: null
+                })) || [],
+                quantities: conversationData.quantity || [],
+                dimensions: conversationData.dimensions?.map(dim => dim.value) || []
+            };
+
+            console.log("Pricing API Payload:", JSON.stringify(payload, null, 2));
+
+            // Make API call to get pricing
+            const response = await fetch(`${process.env.ERP_API_BASE_URL}/api/get-quote-price-for-whatsapp`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    // 'Authorization': `Bearer ${process.env.PRICING_API_TOKEN || ''}`,
+                    // Add any other required headers
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Pricing API error: ${response.status} ${response.statusText}`);
+            }
+
+            const pricingData = await response.json();
+            console.log("Pricing API Response:", pricingData);
+
+            return pricingData;
+
+        } catch (error) {
+            console.error('Error getting pricing for quote:', error);
+            await mongoLogger.logError(error, {
+                source: 'pricing-api-call',
+                conversationData: conversationData
+            });
+            
+            // Return a default pricing structure or null
+            return {
+                error: true,
+                message: 'Failed to get pricing information',
+                details: error.message
+            };
+        }
+    }
+
+    async sendPricingTable(from, conversationData, pricingData) {
+        try {
+            const { qty, unit_cost } = pricingData;
+            
+            // Create beautiful pricing table
+            let pricingMessage = `🎉 **Your Quote is Ready!** 🎉\n\n`;
+            
+            // Add product details
+            pricingMessage += `📦 **Product:** ${conversationData.selectedProduct?.name || 'N/A'}\n`;
+            pricingMessage += `🧱 **Material:** ${conversationData.selectedMaterial?.name || 'N/A'}\n`;
+            pricingMessage += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'N/A'}\n`;
+            pricingMessage += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'N/A'}\n\n`;
+            
+            // Create pricing table
+            pricingMessage += `💰 **PRICING BREAKDOWN**\n`;
+            pricingMessage += `┌─────────────┬─────────────┬─────────────┐\n`;
+            pricingMessage += `│    Tier     │  Quantity   │ Unit Price  │\n`;
+            pricingMessage += `├─────────────┼─────────────┼─────────────┤\n`;
+            
+            // Add each tier
+            qty.forEach((quantity, index) => {
+                const tier = index + 1;
+                const unitPrice = unit_cost[index];
+                const totalPrice = (quantity * unitPrice).toFixed(2);
+                
+                pricingMessage += `│   Tier ${tier}    │   ${quantity.toLocaleString()}   │   $${unitPrice.toFixed(3)}   │\n`;
+            });
+            
+            pricingMessage += `└─────────────┴─────────────┴─────────────┘\n\n`;
+            
+            // Add total calculation for each tier
+            pricingMessage += `📊 **TOTAL COST BY TIER**\n`;
+            qty.forEach((quantity, index) => {
+                const tier = index + 1;
+                const unitPrice = unit_cost[index];
+                const totalPrice = (quantity * unitPrice).toFixed(2);
+                
+                pricingMessage += `Tier ${tier}: ${quantity.toLocaleString()} units × $${unitPrice.toFixed(3)} = **$${totalPrice}**\n`;
+            });
+            
+            pricingMessage += `\n✨ **Best Value:** Tier ${qty.length} at $${unit_cost[qty.length - 1].toFixed(3)} per unit\n\n`;
+            
+            // Ask for PDF
+            pricingMessage += `📄 Would you like me to generate a detailed PDF quote for your records?\n\n`;
+            pricingMessage += `Reply with "Yes" for PDF or "No" to finish.`;
+
+            await this.whatsappService.sendMessage(from, pricingMessage);
+
+        } catch (error) {
+            console.error('Error sending pricing table:', error);
+            await mongoLogger.logError(error, {
+                source: 'pricing-table-sender',
+                from: from,
+                pricingData: pricingData
+            });
+
+            // Fallback message
+            await this.whatsappService.sendMessage(
+                from,
+                "Here's your pricing information:\n\n" +
+                `Quantities: ${pricingData.qty.join(', ')}\n` +
+                `Unit Costs: $${pricingData.unit_cost.join(', $')}\n\n` +
+                "Would you like a PDF quote? Reply Yes or No."
             );
         }
     }
@@ -766,7 +1640,7 @@ What quantity would you like?`;
         try {
             // Generate the quote
             const quote = await conversationService.generateQuote(from, conversationData);
-            
+
             // Format and send the quote
             const quoteMessage = conversationService.formatQuoteMessage(quote);
             await this.whatsappService.sendMessage(from, quoteMessage);
@@ -825,7 +1699,7 @@ Would you like to:`;
 
             // Handle format: "5x7x3" or "5,7,3" or "5 7 3"
             let numbers = [];
-            
+
             if (dimensionStringLower.includes('x')) {
                 numbers = dimensionStringLower.split('x').map(v => parseFloat(v.trim()));
             } else if (dimensionStringLower.includes(',')) {
@@ -890,15 +1764,15 @@ Would you like to:`;
 
     async handleInteractiveMessage(message, from) {
         await mongoLogger.info('Received interactive message', { from });
-        
+
         if (message.interactive.type === 'button_reply') {
             const buttonId = message.interactive.button_reply.id;
             const buttonTitle = message.interactive.button_reply.title;
             await mongoLogger.info('Button clicked', { buttonId, buttonTitle, from });
-            
+
             // Get current conversation state
             const conversationState = await conversationService.getConversationState(from);
-            
+
             // Handle button responses
             if (buttonId === 'quote_yes') {
                 await conversationService.updateConversationState(from, {
@@ -934,7 +1808,7 @@ Would you like to:`;
             const listId = message.interactive.list_reply.id;
             const listTitle = message.interactive.list_reply.title;
             await mongoLogger.info('List item selected', { listId, listTitle, from });
-            
+
             // Process the list selection as a regular text message
             await this.processConversationFlow(listId, from, await conversationService.getConversationState(from));
         }

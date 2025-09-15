@@ -27,22 +27,29 @@ const conversationStateSchema = new mongoose.Schema({
             erp_id: Number,
             name: String,
             description: String,
-            basePrice: Number,
-            dimensionFields: [{
-                name: String,
-                unit: String,
-                isRequired: Boolean,
-                minValue: Number,
-                maxValue: Number
-            }]
+            basePrice: Number
         },
         dimensions: [{
             name: String,
             value: Number
         }],
-        selectedMaterial: String,
-        selectedFinish: String,
-        quantity: Number,
+        selectedMaterial: {
+            _id: String,
+            name: String,
+        },
+        selectedFinish: [{
+            _id: String,
+            name: String
+        }],
+        quantity: [Number],
+        quoteAcknowledged: Boolean,
+        completed: Boolean,
+        pricing_done: Boolean,
+        pricingData: {
+            status: String,
+            qty: [Number],
+            unit_cost: [Number]
+        },
         quoteData: {
             basePrice: Number,
             materialPrice: Number,

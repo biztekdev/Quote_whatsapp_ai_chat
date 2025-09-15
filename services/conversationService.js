@@ -136,7 +136,7 @@ class ConversationService {
      */
     async getProductById(productId) {
         try {
-            return await MylarBagProduct.findOne({ id: productId, isActive: true });
+            return await Product.findOne({ _id: productId, isActive: true });
         } catch (error) {
             console.error('Error getting product by ID:', error);
             throw error;
