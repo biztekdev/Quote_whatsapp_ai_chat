@@ -189,6 +189,9 @@ async function processMessagesAsync(webhookData, startTime) {
     const processingId = `proc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
+        console.log(`🔄 [${processingId}] Starting async message processing`);
+        console.log(`🔄 [${processingId}] Webhook data:`, JSON.stringify(webhookData, null, 2));
+        
         await mongoLogger.info('🔍 Starting async message processing', { 
             processingId,
             webhookData,
@@ -520,11 +523,26 @@ app.post('/webhook', async (req, res) => {
         
         // Log the raw webhook data for debugging
         console.log('📋 RAW WEBHOOK DATA:', JSON.stringify(req.body, null, 2));
-        await mongoLogger.info('📋 Raw webhook data received', {
-            webhookId,
-            rawData: req.body,
-            step: 'RAW_WEBHOOK_DATA'
+        console.log('📋 WEBHOOK STRUCTURE:', {
+            hasObject: !!req.body.object,
+            hasEntry: !!req.body.entry,
+            entryLength: req.body.entry?.length || 0,
+            hasChanges: !!req.body.entry?.[0]?.changes,
+            changesLength: req.body.entry?.[0]?.changes?.length || 0,
+            hasValue: !!req.body.entry?.[0]?.changes?.[0]?.value,
+            hasMessages: !!req.body.entry?.[0]?.changes?.[0]?.value?.messages,
+            messageCount: req.body.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
         });
+        
+        try {
+            await mongoLogger.info('📋 Raw webhook data received', {
+                webhookId,
+                rawData: req.body,
+                step: 'RAW_WEBHOOK_DATA'
+            });
+        } catch (logError) {
+            console.error('❌ Failed to log raw webhook data:', logError);
+        }
         
         // Extract message from webhook payload
         const webhookData = req.body;
@@ -534,18 +552,30 @@ app.post('/webhook', async (req, res) => {
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
         
-        await mongoLogger.info('🔄 Starting async message processing', {
-            webhookId,
+        console.log(`🔄 [${webhookId}] Starting async processing - ${messageCount} messages found`);
+        console.log(`🔄 [${webhookId}] Webhook analysis:`, {
             hasMessages,
             messageCount,
             firstMessageId: firstMessage?.id,
             firstMessageFrom: firstMessage?.from,
             firstMessageType: firstMessage?.type,
-            firstMessageBody: firstMessage?.text?.body || firstMessage?.caption,
-            step: 'ASYNC_START'
+            firstMessageBody: firstMessage?.text?.body || firstMessage?.caption
         });
         
-        console.log(`🔄 [${webhookId}] Starting async processing - ${messageCount} messages found`);
+        try {
+            await mongoLogger.info('🔄 Starting async message processing', {
+                webhookId,
+                hasMessages,
+                messageCount,
+                firstMessageId: firstMessage?.id,
+                firstMessageFrom: firstMessage?.from,
+                firstMessageType: firstMessage?.type,
+                firstMessageBody: firstMessage?.text?.body || firstMessage?.caption,
+                step: 'ASYNC_START'
+            });
+        } catch (logError) {
+            console.error('❌ Failed to log async start:', logError);
+        }
         
         // If no messages found, still process to handle empty webhooks
         if (!hasMessages) {
