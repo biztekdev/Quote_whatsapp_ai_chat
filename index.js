@@ -581,20 +581,26 @@ app.post('/webhook', async (req, res) => {
         
         // Process messages asynchronously (don't await - fire and forget)
         console.log(`🚀 [${webhookId}] Calling processMessagesAsync...`);
-        processMessagesAsync(webhookData, startTime).then(() => {
-            console.log(`✅ [${webhookId}] processMessagesAsync completed successfully`);
-        }).catch(error => {
-            console.error(`❌ [${webhookId}] Error in async processing:`, error);
-            mongoLogger.error('❌ Webhook async processing failed', { 
-                webhookId,
-                error: error.message,
-                stack: error.stack,
-                webhookData: req.body,
-                step: 'ASYNC_ERROR'
-            }).catch(logError => {
-                console.error(`Failed to log async error for ${webhookId}:`, logError);
+        try {
+            processMessagesAsync(webhookData, startTime).then(() => {
+                console.log(`✅ [${webhookId}] processMessagesAsync completed successfully`);
+            }).catch(error => {
+                console.error(`❌ [${webhookId}] Error in async processing:`, error);
+                console.error(`❌ [${webhookId}] Error stack:`, error.stack);
+                mongoLogger.error('❌ Webhook async processing failed', { 
+                    webhookId,
+                    error: error.message,
+                    stack: error.stack,
+                    webhookData: req.body,
+                    step: 'ASYNC_ERROR'
+                }).catch(logError => {
+                    console.error(`Failed to log async error for ${webhookId}:`, logError);
+                });
             });
-        });
+        } catch (syncError) {
+            console.error(`❌ [${webhookId}] Synchronous error calling processMessagesAsync:`, syncError);
+            console.error(`❌ [${webhookId}] Sync error stack:`, syncError.stack);
+        }
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
