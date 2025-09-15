@@ -636,13 +636,20 @@ app.post('/clear-processed-messages', async (req, res) => {
         const memoryCount = processedMessageIds.size;
         processedMessageIds.clear();
         
+        // Clear response tracker in message handler
+        let responseTrackerCount = 0;
+        if (messageHandler && messageHandler.responseTracker) {
+            responseTrackerCount = messageHandler.responseTracker.size;
+            messageHandler.responseTracker.clear();
+        }
+        
         let dbCount = 0;
         if (dbConnected) {
             const result = await ProcessedMessage.deleteMany({});
             dbCount = result.deletedCount;
         }
         
-        console.log(`🧹 Cleared ${memoryCount} messages from memory and ${dbCount} from database`);
+        console.log(`🧹 Cleared ${memoryCount} messages from memory, ${responseTrackerCount} from response tracker, and ${dbCount} from database`);
         
         res.json({
             success: true,

@@ -4,8 +4,10 @@ import crypto from 'crypto';
 
 class ConversationService {
     constructor() {
-        // Initialize default products
-        this.initializeDefaultProducts();
+        // Initialize default products (non-blocking)
+        this.initializeDefaultProducts().catch(error => {
+            console.error('Failed to initialize default products:', error);
+        });
     }
 
     /**
@@ -273,7 +275,13 @@ Thank you for choosing our mylar bags! 🌟`;
      */
     async initializeDefaultProducts() {
         try {
-            const productCount = await MylarBagProduct.countDocuments();
+            // Add timeout to prevent hanging
+            const productCount = await Promise.race([
+                MylarBagProduct.countDocuments(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Database timeout')), 5000)
+                )
+            ]);
             if (productCount === 0) {
                 const defaultProducts = [
                     {
@@ -335,6 +343,8 @@ Thank you for choosing our mylar bags! 🌟`;
             }
         } catch (error) {
             console.error('Error initializing default products:', error);
+            // Don't throw error - just log it and continue
+            // This prevents the database timeout from breaking message processing
         }
     }
 
