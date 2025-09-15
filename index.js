@@ -407,6 +407,78 @@ app.post('/clear-processed-messages', async (req, res) => {
     }
 });
 
+// Reset conversation for a specific phone number
+app.post('/reset-conversation', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        
+        if (!phone) {
+            return res.status(400).json({
+                success: false,
+                error: 'Phone number is required',
+                example: { phone: "923260533337" }
+            });
+        }
+        
+        // Import conversation service
+        const conversationService = (await import('./services/conversationService.js')).default;
+        
+        // Reset the conversation
+        const result = await conversationService.resetConversation(phone);
+        
+        console.log(`🔄 Conversation reset for phone: ${phone}`);
+        
+        res.json({
+            success: true,
+            message: `Conversation reset successfully for ${phone}`,
+            phone: phone,
+            newConversationState: result
+        });
+        
+    } catch (error) {
+        console.error('❌ Error resetting conversation:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to reset conversation',
+            details: error.message
+        });
+    }
+});
+
+// Get conversation status for a phone number
+app.get('/conversation-status/:phone', async (req, res) => {
+    try {
+        const { phone } = req.params;
+        
+        // Import conversation service
+        const conversationService = (await import('./services/conversationService.js')).default;
+        
+        // Get conversation state
+        const conversationState = await conversationService.getConversationState(phone);
+        
+        res.json({
+            success: true,
+            phone: phone,
+            conversationState: {
+                currentStep: conversationState.currentStep,
+                isActive: conversationState.isActive,
+                lastMessageAt: conversationState.lastMessageAt,
+                conversationData: conversationState.conversationData,
+                createdAt: conversationState.createdAt,
+                updatedAt: conversationState.updatedAt
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error getting conversation status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get conversation status',
+            details: error.message
+        });
+    }
+});
+
 // Test endpoint to verify message processing
 app.post('/test-message-processing', async (req, res) => {
     try {
