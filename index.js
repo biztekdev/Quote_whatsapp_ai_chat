@@ -23,8 +23,8 @@ import erpSyncRoutes from './api/erpSyncRoutes.js';
 import cronManager from './cron/index.js';
 import { ProcessedMessage } from './models/processedMessageModel.js';
 
-// Load environment variables   
-dotenv.config();    
+// Load environment variables
+dotenv.config();
 
 // await mongoLogger.info('Environment loaded, starting server...');
 
@@ -377,7 +377,7 @@ async function processMessagesAsync(webhookData, startTime) {
                         
                         try {
                             const handlerStartTime = Date.now();
-                            const result = await messageHandler.handleIncomingMessage(message);
+                        const result = await messageHandler.handleIncomingMessage(message);
                             const handlerEndTime = Date.now();
                             
                             await mongoLogger.info('✅ Message handler completed successfully', { 
@@ -406,12 +406,31 @@ async function processMessagesAsync(webhookData, startTime) {
                         }
                     }
                 } else {
-                    await mongoLogger.warn('⚠️ No messages found in webhook data', { 
+                    await mongoLogger.warn('⚠️ No messages found in webhook data - sending test response', { 
                         processingId,
                         webhookData,
                         step: 'NO_MESSAGES_FOUND'
                     });
-                    console.log(`⚠️ [${processingId}] No messages found in webhook data`);
+                    console.log(`⚠️ [${processingId}] No messages found in webhook data - sending test response`);
+                    
+                    // Send a test response even for empty webhooks
+                    try {
+                        const testMessage = "Hello! I received your webhook but no message was found. This is a test response.";
+                        const result = await whatsappService.sendMessage('923260533337', testMessage, 'text');
+                        console.log(`📤 [${processingId}] Test response sent for empty webhook:`, result);
+                        await mongoLogger.info('Test response sent for empty webhook', {
+                            processingId,
+                            result,
+                            step: 'EMPTY_WEBHOOK_RESPONSE'
+                        });
+                    } catch (error) {
+                        console.error(`❌ [${processingId}] Error sending test response:`, error);
+                        await mongoLogger.error('Error sending test response for empty webhook', {
+                            processingId,
+                            error: error.message,
+                            step: 'EMPTY_WEBHOOK_RESPONSE_ERROR'
+                        });
+                    }
                 }
             } else {
                 await mongoLogger.warn('⚠️ No changes found in webhook data', { 
@@ -499,6 +518,14 @@ app.post('/webhook', async (req, res) => {
         await mongoLogger.refreshConnection();
         await mongoLogger.logWebhook(req.body, 'webhook');
         
+        // Log the raw webhook data for debugging
+        console.log('📋 RAW WEBHOOK DATA:', JSON.stringify(req.body, null, 2));
+        await mongoLogger.info('📋 Raw webhook data received', {
+            webhookId,
+            rawData: req.body,
+            step: 'RAW_WEBHOOK_DATA'
+        });
+        
         // Extract message from webhook payload
         const webhookData = req.body;
         
@@ -519,6 +546,16 @@ app.post('/webhook', async (req, res) => {
         });
         
         console.log(`🔄 [${webhookId}] Starting async processing - ${messageCount} messages found`);
+        
+        // If no messages found, still process to handle empty webhooks
+        if (!hasMessages) {
+            console.log(`⚠️ [${webhookId}] No messages found in webhook, but processing anyway`);
+            await mongoLogger.warn('⚠️ Empty webhook received but processing anyway', {
+                webhookId,
+                webhookData: req.body,
+                step: 'EMPTY_WEBHOOK_PROCESSING'
+            });
+        }
         
         // Process messages asynchronously (don't await - fire and forget)
         processMessagesAsync(webhookData, startTime).catch(error => {
@@ -551,10 +588,10 @@ app.post('/webhook', async (req, res) => {
         
         // Still respond with 200 to WhatsApp to avoid retries (if not already sent)
         if (!res.headersSent) {
-            res.status(200).json({
-                status: 'error',
-                error: error.message,
-                processingTime: `${processingTime}ms`,
+        res.status(200).json({
+            status: 'error',
+            error: error.message,
+            processingTime: `${processingTime}ms`,
                 timestamp: new Date().toISOString(),
                 webhookId: webhookId
             });
