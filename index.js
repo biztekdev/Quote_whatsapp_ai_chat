@@ -900,6 +900,31 @@ app.get('/whatsapp-config-check', async (req, res) => {
     }
 });
 
+// Test webhook verification
+app.get('/test-webhook-verification', async (req, res) => {
+    const testQuery = {
+        'hub.mode': 'subscribe',
+        'hub.verify_token': process.env.WEBHOOK_VERIFY_TOKEN,
+        'hub.challenge': 'test_challenge_123'
+    };
+    
+    res.json({
+        success: true,
+        message: 'Webhook verification test',
+        testUrl: `https://quote-whatsapp-ai-chat.vercel.app/webhook?${new URLSearchParams(testQuery).toString()}`,
+        environment: {
+            verifyToken: process.env.WEBHOOK_VERIFY_TOKEN ? 'Set' : 'Missing',
+            webhookUrl: 'https://quote-whatsapp-ai-chat.vercel.app/webhook'
+        },
+        instructions: [
+            '1. Copy the testUrl above',
+            '2. Paste it in your browser',
+            '3. You should see "test_challenge_123" as response',
+            '4. If you see "Forbidden", check your WEBHOOK_VERIFY_TOKEN'
+        ]
+    });
+});
+
 // Test webhook endpoint
 app.post('/test-webhook', async (req, res) => {
     console.log('🧪 Test webhook called with:', req.body);
