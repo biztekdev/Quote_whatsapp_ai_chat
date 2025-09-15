@@ -801,6 +801,59 @@ app.get('/webhook-config-check', async (req, res) => {
     }
 });
 
+// Get latest webhook data with full details
+app.get('/latest-webhook', async (req, res) => {
+    try {
+        if (!dbConnected) {
+            return res.json({
+                success: false,
+                error: 'Database not connected'
+            });
+        }
+
+        const recentCalls = await webhookService.getRecentCalls(1);
+        
+        if (recentCalls.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No webhooks received yet',
+                count: 0
+            });
+        }
+
+        const latestCall = recentCalls[0];
+        const webhookData = latestCall.whatsappData;
+        
+        res.json({
+            success: true,
+            latestWebhook: {
+                timestamp: latestCall.receivedAt,
+                rawData: webhookData,
+                analysis: {
+                    hasObject: !!webhookData?.object,
+                    hasEntry: !!webhookData?.entry,
+                    entryLength: webhookData?.entry?.length || 0,
+                    hasChanges: !!webhookData?.entry?.[0]?.changes,
+                    changesLength: webhookData?.entry?.[0]?.changes?.length || 0,
+                    hasValue: !!webhookData?.entry?.[0]?.changes?.[0]?.value,
+                    hasMessages: !!webhookData?.entry?.[0]?.changes?.[0]?.value?.messages,
+                    messageCount: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
+                    firstMessage: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || null,
+                    field: webhookData?.entry?.[0]?.changes?.[0]?.field
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error in latest-webhook:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get latest webhook data',
+            details: error.message
+        });
+    }
+});
+
 // Detailed webhook analysis
 app.get('/debug-webhooks', async (req, res) => {
     try {
