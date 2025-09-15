@@ -649,7 +649,18 @@ app.get('/webhook-logs', async (req, res) => {
         }
         
         // Import the Log model
-        const { Log } = await import('./models/logModel.js');
+        let Log;
+        try {
+            const logModule = await import('./models/logModel.js');
+            Log = logModule.Log || logModule.default;
+        } catch (importError) {
+            console.error('Failed to import Log model:', importError);
+            return res.status(500).json({
+                success: false,
+                error: 'Log model not available',
+                details: importError.message
+            });
+        }
         
         const logs = await Log.find(query)
             .sort({ timestamp: -1 })
@@ -668,6 +679,43 @@ app.get('/webhook-logs', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Failed to fetch webhook logs',
+            details: error.message
+        });
+    }
+});
+
+// Simple debug endpoint to see recent webhook data
+app.get('/debug-webhooks', async (req, res) => {
+    try {
+        // Get recent webhook calls from the webhook service
+        if (!dbConnected) {
+            return res.json({
+                success: false,
+                error: 'Database not connected',
+                message: 'Cannot retrieve webhook data without database'
+            });
+        }
+
+        const recentCalls = await webhookService.getRecentCalls(10);
+        
+        res.json({
+            success: true,
+            count: recentCalls.length,
+            webhooks: recentCalls.map(call => ({
+                timestamp: call.receivedAt,
+                hasMessages: !!(call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
+                messageCount: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
+                firstMessage: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || null,
+                field: call.whatsappData?.entry?.[0]?.changes?.[0]?.field,
+                webhookType: call.whatsappData?.entry?.[0]?.changes?.[0]?.value?.statuses ? 'status' : 'message'
+            }))
+        });
+        
+    } catch (error) {
+        console.error('❌ Error in debug-webhooks:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get debug webhook data',
             details: error.message
         });
     }
