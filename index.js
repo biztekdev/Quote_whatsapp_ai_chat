@@ -594,15 +594,8 @@ app.post('/webhook', async (req, res) => {
                 step: 'EMPTY_WEBHOOK_PROCESSING'
             });
         } else {
-            // Messages found - send immediate test response
-            console.log(`🎯 [${webhookId}] Messages found! Sending immediate test response...`);
-            try {
-                const testMessage = `Hello! I received your message: "${firstMessage?.text?.body || 'Unknown message'}"`;
-                const result = await whatsappService.sendMessage(firstMessage?.from || '923260533337', testMessage, 'text');
-                console.log(`📤 [${webhookId}] Immediate test response sent:`, result);
-            } catch (error) {
-                console.error(`❌ [${webhookId}] Error sending immediate test response:`, error);
-            }
+            // Messages found - let normal processing handle the response
+            console.log(`🎯 [${webhookId}] Messages found! Processing normally...`);
         }
         
         // Process messages asynchronously (don't await - fire and forget)
