@@ -23,8 +23,8 @@ import erpSyncRoutes from './api/erpSyncRoutes.js';
 import cronManager from './cron/index.js';
 import { ProcessedMessage } from './models/processedMessageModel.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables   
+dotenv.config();    
 
 // await mongoLogger.info('Environment loaded, starting server...');
 
@@ -184,19 +184,9 @@ app.get("/webhook", async (req, res) => {
 // Create a Set to track processed message IDs (in-memory cache)
 const processedMessageIds = new Set();
 
-// WhatsApp webhook for receiving messages
-app.post('/webhook', async (req, res) => {
-    const startTime = Date.now();
-    let processingResult = {};
-    
+// Async function to process messages without blocking webhook response
+async function processMessagesAsync(webhookData, startTime) {
     try {
-        // Force refresh connection status before logging webhook
-        await mongoLogger.refreshConnection();
-        await mongoLogger.logWebhook(req.body, 'webhook');
-        
-        // Extract message from webhook payload
-        const webhookData = req.body;
-        
         // Check if this is a valid WhatsApp webhook with messages
         if (webhookData.entry && webhookData.entry.length > 0) {
             const entry = webhookData.entry[0];
@@ -292,16 +282,46 @@ app.post('/webhook', async (req, res) => {
         }
         
         const processingTime = Date.now() - startTime;
-        await mongoLogger.info('Webhook processed', { 
+        await mongoLogger.info('Async message processing completed', { 
             processingTime: `${processingTime}ms`,
             messageId: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id,
             from: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from
         });
 
+    } catch (error) {
+        const processingTime = Date.now() - startTime;
+        await mongoLogger.logError(error, { 
+            source: 'async-message-processing',
+            processingTime: `${processingTime}ms`,
+            webhookData: webhookData
+        });
+    }
+}
+
+// WhatsApp webhook for receiving messages
+app.post('/webhook', async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        // IMMEDIATELY respond to WhatsApp to prevent retries
         res.status(200).json({
             status: 'ok',
-            processingTime: `${processingTime}ms`,
             timestamp: new Date().toISOString()
+        });
+        
+        // Force refresh connection status before logging webhook
+        await mongoLogger.refreshConnection();
+        await mongoLogger.logWebhook(req.body, 'webhook');
+        
+        // Extract message from webhook payload
+        const webhookData = req.body;
+        
+        // Process messages asynchronously (don't await - fire and forget)
+        processMessagesAsync(webhookData, startTime).catch(error => {
+            mongoLogger.logError(error, { 
+                source: 'webhook-async-processing',
+                webhookData: req.body 
+            });
         });
 
     } catch (error) {
@@ -314,13 +334,15 @@ app.post('/webhook', async (req, res) => {
             requestBody: req.body
         });
         
-        // Still respond with 200 to WhatsApp to avoid retries
-        res.status(200).json({
-            status: 'error',
-            error: error.message,
-            processingTime: `${processingTime}ms`,
-            timestamp: new Date().toISOString()
-        });
+        // Still respond with 200 to WhatsApp to avoid retries (if not already sent)
+        if (!res.headersSent) {
+            res.status(200).json({
+                status: 'error',
+                error: error.message,
+                processingTime: `${processingTime}ms`,
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 });
 
