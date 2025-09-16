@@ -100,11 +100,9 @@ class MessageHandler {
     }
 
     async handleTextMessage(message, from) {
-        await mongoLogger.info('Handling text message');
         let messageText = 'unknown';
         try {
             messageText = message.text.body;
-            await mongoLogger.info('Text message content', { messageText });
 
             // Check if user wants to start a new quote
             const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
@@ -114,7 +112,6 @@ class MessageHandler {
 
             if (wantsNewQuote) {
                 console.log("User wants new quote, resetting conversation");
-                await mongoLogger.info('User requested new quote, resetting conversation', { from, messageText });
                 
                 // Reset conversation to start fresh
                 await conversationService.resetConversation(from);
@@ -133,15 +130,7 @@ class MessageHandler {
             
             try {
                 witResponse = await this.witService.processMessage(messageText);
-                console.log("witResponse111111111 ", witResponse);
                 witEntities = witResponse?.data?.entities || {};
-                
-                await mongoLogger.info('Wit.ai processing successful', { 
-                    messageText, 
-                    from, 
-                    entitiesFound: Object.keys(witEntities).length,
-                    step: 'WIT_SUCCESS'
-                });
                 
             } catch (witError) {
                 console.error("❌ Wit.ai processing failed:", witError);
@@ -187,21 +176,8 @@ class MessageHandler {
                 conversationState = await conversationService.getConversationState(from);
             }
             // Process message through our conversation flow
-            await mongoLogger.info('Starting conversation flow processing', { 
-                messageText, 
-                from,
-                currentStep: conversationState.currentStep,
-                hasConversationData: !!conversationState.conversationData,
-                step: 'CONVERSATION_FLOW_START'
-            });
             
             await this.processConversationFlow(message, messageText, from, conversationState, false);
-            
-            await mongoLogger.info('Conversation flow processing completed', { 
-                messageText, 
-                from,
-                step: 'CONVERSATION_FLOW_END'
-            });
 
         } catch (error) {
             console.error('Error in handleTextMessage:', error);

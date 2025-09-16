@@ -27,9 +27,7 @@ class ConversationService {
             ]);
 
             
-            console.log('state found', state);
             if (!state) {
-                console.log('No state found for phone', phone);
                 state = new LegacyConversationState({
                     phone,
                     currentStep: 'start',
@@ -37,7 +35,6 @@ class ConversationService {
                     isActive: true
                 });
                 await state.save();
-                console.log(`📱 New conversation started for ${phone}`);
             }
 
             return state;

@@ -189,41 +189,20 @@ async function processMessagesAsync(webhookData, startTime) {
     const processingId = `proc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
-        console.log(`🔄 [${processingId}] Starting async message processing`);
-        console.log(`🔄 [${processingId}] Webhook data:`, JSON.stringify(webhookData, null, 2));
+        console.log(`🔄 Processing messages`);
         
-        await mongoLogger.info('🔍 Starting async message processing', { 
-            processingId,
-            webhookData,
-            startTime: new Date(startTime).toISOString(),
-            step: 'INIT'
-        });
+        // Async processing started
         
-        console.log(`🔍 [${processingId}] Starting processMessagesAsync`);
+        // Processing started
         
         // Check if this is a valid WhatsApp webhook with messages
         if (webhookData.entry && webhookData.entry.length > 0) {
-            await mongoLogger.info('✅ Webhook structure validation passed', { 
-                processingId,
-                entriesFound: webhookData.entry.length,
-                step: 'VALIDATION_ENTRY'
-            });
             
             const entry = webhookData.entry[0];
             if (entry.changes && entry.changes.length > 0) {
-                await mongoLogger.info('✅ Changes structure validation passed', { 
-                    processingId,
-                    changesFound: entry.changes.length,
-                    step: 'VALIDATION_CHANGES'
-                });
                 
                 const change = entry.changes[0];
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
-                    await mongoLogger.info('✅ Messages found in webhook', { 
-                        processingId,
-                        messagesCount: change.value.messages.length,
-                        step: 'VALIDATION_MESSAGES'
-                    });
                     
                     // Process each message in the webhook
                     for (let i = 0; i < change.value.messages.length; i++) {
@@ -235,29 +214,10 @@ async function processMessagesAsync(webhookData, startTime) {
                         
                         const messageProcessingId = `${processingId}_msg_${i}`;
                         
-                        await mongoLogger.info('🔄 Starting individual message processing', { 
-                            processingId,
-                            messageProcessingId,
-                            messageId, 
-                            from, 
-                            messageType,
-                            messageBody,
-                            messageIndex: i,
-                            step: 'MESSAGE_START'
-                        });
-                        
                         console.log(`🔄 [${messageProcessingId}] Processing message: ${messageId} from ${from} type ${messageType}`);
                         
                         // Check if message has already been processed (in-memory check first)
                         if (processedMessageIds.has(messageId)) {
-                            await mongoLogger.warn('⏭️ Message already processed (memory cache), skipping', { 
-                                processingId,
-                                messageProcessingId,
-                                messageId, 
-                                from, 
-                                messageType,
-                                step: 'DUPLICATE_MEMORY_SKIP'
-                            });
                             console.log(`⏭️ [${messageProcessingId}] Message already in memory cache, skipping`);
                             continue; // Skip this message
                         }
@@ -265,59 +225,28 @@ async function processMessagesAsync(webhookData, startTime) {
                         // Check database for processed messages (in case server restarted)
                         if (dbConnected) {
                             try {
-                                await mongoLogger.info('🔍 Checking database for duplicate message', { 
-                                    processingId,
-                                    messageProcessingId,
-                                    messageId,
-                                    step: 'DB_DUPLICATE_CHECK'
-                                });
+                                // Checking database for duplicate message
                                 
                                 const existingMessage = await ProcessedMessage.findOne({ messageId });
                                 if (existingMessage) {
-                                    await mongoLogger.warn('⏭️ Message already processed (database), skipping', { 
-                                        processingId,
-                                        messageProcessingId,
-                                        messageId, 
-                                        from, 
-                                        messageType,
-                                        originallyProcessedAt: existingMessage.processedAt,
-                                        step: 'DUPLICATE_DB_SKIP'
-                                    });
+                                    // Message already processed in database
                                     // Add to memory cache for future quick checks
                                     processedMessageIds.add(messageId);
                                     console.log(`⏭️ [${messageProcessingId}] Message found in database, skipping`);
                                     continue; // Skip this message
                                 }
                                 
-                                await mongoLogger.info('✅ Message not found in database, proceeding', { 
-                                    processingId,
-                                    messageProcessingId,
-                                    messageId,
-                                    step: 'DB_CHECK_PASSED'
-                                });
+                                // Message not found in database, proceeding
                                 
                             } catch (dbError) {
-                                await mongoLogger.error('❌ Database check failed', { 
-                                    processingId,
-                                    messageProcessingId,
-                                    messageId, 
-                                    error: dbError.message,
-                                    stack: dbError.stack,
-                                    step: 'DB_CHECK_ERROR'
-                                });
+                                console.error(`❌ [${messageProcessingId}] Database check failed:`, dbError);
                                 // Continue processing even if DB check fails
                             }
                         }
                         
                         // Add message ID to processed set
                         processedMessageIds.add(messageId);
-                        await mongoLogger.info('✅ Message added to memory cache', { 
-                            processingId,
-                            messageProcessingId,
-                            messageId,
-                            cacheSize: processedMessageIds.size,
-                            step: 'MEMORY_CACHE_ADDED'
-                        });
+                        // Message added to memory cache
                         
                         // Store in database for persistence
                         if (dbConnected) {
@@ -329,23 +258,10 @@ async function processMessagesAsync(webhookData, startTime) {
                                     webhookData: message
                                 });
                                 
-                                await mongoLogger.info('✅ Message stored in database', { 
-                                    processingId,
-                                    messageProcessingId,
-                                    messageId,
-                                    dbRecordId: processedMessage._id,
-                                    step: 'DB_STORAGE_SUCCESS'
-                                });
+                                // Message stored in database
                                 
                             } catch (dbError) {
-                                await mongoLogger.error('❌ Database storage failed', { 
-                                    processingId,
-                                    messageProcessingId,
-                                    messageId, 
-                                    error: dbError.message,
-                                    stack: dbError.stack,
-                                    step: 'DB_STORAGE_ERROR'
-                                });
+                                console.error(`❌ [${messageProcessingId}] Database storage failed:`, dbError);
                                 // Continue processing even if DB storage fails
                             }
                         }
@@ -357,24 +273,10 @@ async function processMessagesAsync(webhookData, startTime) {
                             // Keep the last 500 IDs
                             idsArray.slice(-500).forEach(id => processedMessageIds.add(id));
                             
-                            await mongoLogger.info('🧹 Memory cache cleaned up', { 
-                                processingId,
-                                oldSize: idsArray.length,
-                                newSize: processedMessageIds.size,
-                                step: 'MEMORY_CLEANUP'
-                            });
+                            // Memory cache cleaned up
                         }
                         
                         // Process the message
-                        await mongoLogger.info('🚀 Starting message handler execution', { 
-                            processingId,
-                            messageProcessingId,
-                            messageId,
-                            from,
-                            messageType,
-                            messageBody,
-                            step: 'HANDLER_START'
-                        });
                         
                         console.log(`🚀 [${messageProcessingId}] About to call messageHandler.handleIncomingMessage`);
                         
@@ -383,78 +285,31 @@ async function processMessagesAsync(webhookData, startTime) {
                         const result = await messageHandler.handleIncomingMessage(message);
                             const handlerEndTime = Date.now();
                             
-                            await mongoLogger.info('✅ Message handler completed successfully', { 
-                                processingId,
-                                messageProcessingId,
-                                messageId,
-                                handlerDuration: `${handlerEndTime - handlerStartTime}ms`,
-                                result: typeof result === 'object' ? JSON.stringify(result) : result,
-                                step: 'HANDLER_SUCCESS'
-                            });
+                            // Message handler completed successfully
                             
                             console.log(`✅ [${messageProcessingId}] Message handler completed successfully`);
                             
                         } catch (messageError) {
-                            await mongoLogger.error('❌ Message handler failed', { 
-                                processingId,
-                                messageProcessingId,
-                                messageId,
-                                error: messageError.message,
-                                stack: messageError.stack,
-                                step: 'HANDLER_ERROR'
-                            });
-                            
                             console.error(`❌ [${messageProcessingId}] Message handler failed:`, messageError);
                             throw messageError;
                         }
                     }
                 } else {
-                    await mongoLogger.warn('⚠️ No messages found in webhook data', { 
-                        processingId,
-                        webhookData,
-                        step: 'NO_MESSAGES_FOUND'
-                    });
                     console.log(`⚠️ [${processingId}] No messages found in webhook data - skipping (likely status update)`);
                 }
             } else {
-                await mongoLogger.warn('⚠️ No changes found in webhook data', { 
-                    processingId,
-                    webhookData,
-                    step: 'NO_CHANGES_FOUND'
-                });
                 console.log(`⚠️ [${processingId}] No changes found in webhook data`);
             }
         } else {
-            await mongoLogger.warn('⚠️ No entries found in webhook data', { 
-                processingId,
-                webhookData,
-                step: 'NO_ENTRIES_FOUND'
-            });
             console.log(`⚠️ [${processingId}] No entries found in webhook data`);
         }
         
         const processingTime = Date.now() - startTime;
-        await mongoLogger.info('🎯 Async message processing completed', { 
-            processingId,
-            processingTime: `${processingTime}ms`,
-            totalDuration: processingTime,
-            messageId: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id,
-            from: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from,
-            step: 'PROCESSING_COMPLETED'
-        });
-        
         console.log(`🎯 [${processingId}] Processing completed in ${processingTime}ms`);
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
-        await mongoLogger.error('💥 Async message processing failed', { 
-            processingId,
-            error: error.message,
-            stack: error.stack,
-            processingTime: `${processingTime}ms`,
-            webhookData: webhookData,
-            step: 'PROCESSING_FAILED'
-        });
+        // Async message processing failed
         console.error(`💥 [${processingId}] Processing failed:`, error);
     }
 }
@@ -489,18 +344,11 @@ app.post('/webhook', async (req, res) => {
         });
         
         const responseDelay = Date.now() - startTime;
-        await mongoLogger.info('✅ Immediate response sent to WhatsApp', {
-            webhookId,
-            responseDelay: `${responseDelay}ms`,
-            responseTime: new Date(responseTime).toISOString(),
-            step: 'RESPONSE_SENT'
-        });
+        // Response sent to WhatsApp
         
         console.log(`✅ [${webhookId}] Response sent to WhatsApp in ${responseDelay}ms`);
         
-        // Force refresh connection status before logging webhook
-        await mongoLogger.refreshConnection();
-        await mongoLogger.logWebhook(req.body, 'webhook');
+        // Webhook data processed
         
         // Also store in webhook service for debugging
         try {
@@ -510,28 +358,13 @@ app.post('/webhook', async (req, res) => {
             console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
         }
         
-        // Log the raw webhook data for debugging
-        console.log('📋 RAW WEBHOOK DATA:', JSON.stringify(req.body, null, 2));
-        console.log('📋 WEBHOOK STRUCTURE:', {
-            hasObject: !!req.body.object,
-            hasEntry: !!req.body.entry,
-            entryLength: req.body.entry?.length || 0,
-            hasChanges: !!req.body.entry?.[0]?.changes,
-            changesLength: req.body.entry?.[0]?.changes?.length || 0,
-            hasValue: !!req.body.entry?.[0]?.changes?.[0]?.value,
-            hasMessages: !!req.body.entry?.[0]?.changes?.[0]?.value?.messages,
-            messageCount: req.body.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
+        // Log basic webhook info only
+        console.log('📋 Webhook received:', {
+            hasMessages: !!(req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
+            messageCount: req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
         });
         
-        try {
-            await mongoLogger.info('📋 Raw webhook data received', {
-                webhookId,
-                rawData: req.body,
-                step: 'RAW_WEBHOOK_DATA'
-            });
-        } catch (logError) {
-            console.error('❌ Failed to log raw webhook data:', logError);
-        }
+        // Raw webhook data logged to console only
         
         // Extract message from webhook payload
         const webhookData = req.body;
@@ -541,66 +374,20 @@ app.post('/webhook', async (req, res) => {
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
         
-        console.log(`🔄 [${webhookId}] Starting async processing - ${messageCount} messages found`);
-        console.log(`🔄 [${webhookId}] Webhook analysis:`, {
-            hasMessages,
-            messageCount,
-            firstMessageId: firstMessage?.id,
-            firstMessageFrom: firstMessage?.from,
-            firstMessageType: firstMessage?.type,
-            firstMessageBody: firstMessage?.text?.body || firstMessage?.caption
-        });
+        console.log(`🔄 Processing ${messageCount} messages`);
         
-        try {
-            await mongoLogger.info('🔄 Starting async message processing', {
-                webhookId,
-                hasMessages,
-                messageCount,
-                firstMessageId: firstMessage?.id,
-                firstMessageFrom: firstMessage?.from,
-                firstMessageType: firstMessage?.type,
-                firstMessageBody: firstMessage?.text?.body || firstMessage?.caption,
-                step: 'ASYNC_START'
-            });
-        } catch (logError) {
-            console.error('❌ Failed to log async start:', logError);
-        }
+        // Async processing started
         
-        // If no messages found, still process to handle empty webhooks
+        // If no messages found, skip processing
         if (!hasMessages) {
-            console.log(`⚠️ [${webhookId}] No messages found in webhook, but processing anyway`);
-            await mongoLogger.warn('⚠️ Empty webhook received but processing anyway', {
-                webhookId,
-                webhookData: req.body,
-                step: 'EMPTY_WEBHOOK_PROCESSING'
-            });
-        } else {
-            // Messages found - let normal processing handle the response
-            console.log(`🎯 [${webhookId}] Messages found! Processing normally...`);
+            console.log(`⚠️ No messages found, skipping`);
+            return;
         }
         
         // Process messages asynchronously (don't await - fire and forget)
-        console.log(`🚀 [${webhookId}] Calling processMessagesAsync...`);
-        try {
-            processMessagesAsync(webhookData, startTime).then(() => {
-                console.log(`✅ [${webhookId}] processMessagesAsync completed successfully`);
-            }).catch(error => {
-                console.error(`❌ [${webhookId}] Error in async processing:`, error);
-                console.error(`❌ [${webhookId}] Error stack:`, error.stack);
-                mongoLogger.error('❌ Webhook async processing failed', { 
-                    webhookId,
-                    error: error.message,
-                    stack: error.stack,
-                    webhookData: req.body,
-                    step: 'ASYNC_ERROR'
-                }).catch(logError => {
-                    console.error(`Failed to log async error for ${webhookId}:`, logError);
-                });
-            });
-        } catch (syncError) {
-            console.error(`❌ [${webhookId}] Synchronous error calling processMessagesAsync:`, syncError);
-            console.error(`❌ [${webhookId}] Sync error stack:`, syncError.stack);
-        }
+        processMessagesAsync(webhookData, startTime).catch(error => {
+            console.error(`❌ Async processing error:`, error.message);
+        });
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
