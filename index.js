@@ -12,6 +12,7 @@ import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
 import mongoLogger from './services/mongoLogger.js';
+import messageStatusService from './services/messageStatusService.js';
 import webhookService from './services/webhookService.js';
 import database, { connectDB } from './config/database.js';
 import testRoutes from './api/testRoutes.js';
@@ -181,29 +182,22 @@ app.get("/webhook", async (req, res) => {
     }
 });
 
-// Create a Set to track processed message IDs (in-memory cache)
-const processedMessageIds = new Set();
-
 // Async function to process messages without blocking webhook response
 async function processMessagesAsync(webhookData, startTime) {
     const processingId = `proc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     try {
         console.log(`🔄 Processing messages`);
-        
-        // Async processing started
-        
-        // Processing started
-        
+
         // Check if this is a valid WhatsApp webhook with messages
         if (webhookData.entry && webhookData.entry.length > 0) {
-            
+
             const entry = webhookData.entry[0];
             if (entry.changes && entry.changes.length > 0) {
-                
+
                 const change = entry.changes[0];
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
-                    
+
                     // Process each message in the webhook
                     for (let i = 0; i < change.value.messages.length; i++) {
                         const message = change.value.messages[i];
@@ -211,86 +205,49 @@ async function processMessagesAsync(webhookData, startTime) {
                         const from = message.from;
                         const messageType = message.type;
                         const messageBody = message.text?.body || message.caption || `[${messageType} message]`;
-                        
+
                         const messageProcessingId = `${processingId}_msg_${i}`;
-                        
+
                         console.log(`🔄 [${messageProcessingId}] Processing message: ${messageId} from ${from} type ${messageType}`);
-                        
-                        // Check if message has already been processed (in-memory check first)
-                        if (processedMessageIds.has(messageId)) {
-                            console.log(`⏭️ [${messageProcessingId}] Message already in memory cache, skipping`);
+
+                        // Initialize message status tracking
+                        await messageStatusService.initializeMessageStatus(
+                            messageId,
+                            from,
+                            messageType,
+                            message, // webhookData
+                            null // conversationId
+                        );
+
+                        // Check if message can be processed
+                        const canProcess = await messageStatusService.canProcessMessage(messageId);
+                        if (!canProcess) {
+                            console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
                             continue; // Skip this message
                         }
-                        
-                        // Check database for processed messages (in case server restarted)
-                        if (dbConnected) {
-                            try {
-                                // Checking database for duplicate message
-                                
-                                const existingMessage = await ProcessedMessage.findOne({ messageId });
-                                if (existingMessage) {
-                                    // Message already processed in database
-                                    // Add to memory cache for future quick checks
-                                    processedMessageIds.add(messageId);
-                                    console.log(`⏭️ [${messageProcessingId}] Message found in database, skipping`);
-                                    continue; // Skip this message
-                                }
-                                
-                                // Message not found in database, proceeding
-                                
-                            } catch (dbError) {
-                                console.error(`❌ [${messageProcessingId}] Database check failed:`, dbError);
-                                // Continue processing even if DB check fails
-                            }
-                        }
-                        
-                        // Add message ID to processed set
-                        processedMessageIds.add(messageId);
-                        // Message added to memory cache
-                        
-                        // Store in database for persistence
-                        if (dbConnected) {
-                            try {
-                                const processedMessage = await ProcessedMessage.create({
-                                    messageId,
-                                    from,
-                                    messageType,
-                                    webhookData: message
-                                });
-                                
-                                // Message stored in database
-                                
-                            } catch (dbError) {
-                                console.error(`❌ [${messageProcessingId}] Database storage failed:`, dbError);
-                                // Continue processing even if DB storage fails
-                            }
-                        }
-                        
-                        // Clean up old message IDs (keep only last 1000 to prevent memory issues)
-                        if (processedMessageIds.size > 1000) {
-                            const idsArray = Array.from(processedMessageIds);
-                            processedMessageIds.clear();
-                            // Keep the last 500 IDs
-                            idsArray.slice(-500).forEach(id => processedMessageIds.add(id));
-                            
-                            // Memory cache cleaned up
-                        }
-                        
+
+                        // Mark message as processing
+                        await messageStatusService.markAsProcessing(messageId);
+
                         // Process the message
-                        
                         console.log(`🚀 [${messageProcessingId}] About to call messageHandler.handleIncomingMessage`);
-                        
+
                         try {
                             const handlerStartTime = Date.now();
-                        const result = await messageHandler.handleIncomingMessage(message);
+                            const result = await messageHandler.handleIncomingMessage(message);
                             const handlerEndTime = Date.now();
-                            
-                            // Message handler completed successfully
-                            
-                            console.log(`✅ [${messageProcessingId}] Message handler completed successfully`);
-                            
+
+                            // Mark message as processed successfully
+                            await messageStatusService.markAsProcessed(messageId);
+
+                            console.log(`✅ [${messageProcessingId}] Message handler completed successfully in ${handlerEndTime - handlerStartTime}ms`);
+
                         } catch (messageError) {
                             console.error(`❌ [${messageProcessingId}] Message handler failed:`, messageError);
+
+                            // Mark message processing as failed
+                            await messageStatusService.markAsFailed(messageId, messageError.message);
+
                             throw messageError;
                         }
                     }
@@ -303,7 +260,7 @@ async function processMessagesAsync(webhookData, startTime) {
         } else {
             console.log(`⚠️ [${processingId}] No entries found in webhook data`);
         }
-        
+
         const processingTime = Date.now() - startTime;
         console.log(`🎯 [${processingId}] Processing completed in ${processingTime}ms`);
 
@@ -380,32 +337,34 @@ app.post('/webhook', async (req, res) => {
 // Clear processed messages cache (for testing)
 app.post('/clear-processed-messages', async (req, res) => {
     try {
-        const memoryCount = processedMessageIds.size;
-        processedMessageIds.clear();
-        
-        // Clear response tracker in message handler
+        // Clear memory cache in MessageStatusService
+        const memoryCacheSize = messageStatusService.memoryCache.size;
+        messageStatusService.memoryCache.clear();
+
+        // Clear response tracker in message handler (if it exists)
         let responseTrackerCount = 0;
         if (messageHandler && messageHandler.responseTracker) {
             responseTrackerCount = messageHandler.responseTracker.size;
             messageHandler.responseTracker.clear();
         }
-        
+
+        // Clear database entries
         let dbCount = 0;
         if (dbConnected) {
-            const result = await ProcessedMessage.deleteMany({});
+            const result = await messageStatusService.cleanupOldEntries(0); // Delete all entries
             dbCount = result.deletedCount;
         }
-        
-        console.log(`🧹 Cleared ${memoryCount} messages from memory, ${responseTrackerCount} from response tracker, and ${dbCount} from database`);
-        
+
+        console.log(`🧹 Cleared ${memoryCacheSize} messages from memory, ${responseTrackerCount} from response tracker, and ${dbCount} from database`);
+
         res.json({
             success: true,
             message: 'All message caches cleared successfully',
-            clearedFromMemory: memoryCount,
+            clearedFromMemory: memoryCacheSize,
             clearedFromResponseTracker: responseTrackerCount,
             clearedFromDatabase: dbCount
         });
-        
+
     } catch (error) {
         console.error('❌ Error clearing processed messages:', error);
         res.status(500).json({
@@ -702,10 +661,17 @@ app.get('/debug-webhooks', async (req, res) => {
 // Get processing pipeline status
 app.get('/processing-status', async (req, res) => {
     try {
+        // Get message status statistics
+        const messageStats = await messageStatusService.getStatistics(24); // Last 24 hours
+
         const status = {
-            memoryCache: {
-                size: processedMessageIds.size,
-                maxSize: 1000
+            messageStatus: {
+                total: messageStats.total,
+                processed: messageStats.processed,
+                responded: messageStats.responded,
+                failed: messageStats.failed,
+                responseFailed: messageStats.responseFailed,
+                memoryCacheSize: messageStats.memoryCacheSize
             },
             database: {
                 connected: dbConnected,
@@ -721,13 +687,13 @@ app.get('/processing-status', async (req, res) => {
                 phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || 'Missing'
             }
         };
-        
+
         res.json({
             success: true,
             status,
             timestamp: new Date().toISOString()
         });
-        
+
     } catch (error) {
         res.status(500).json({
             success: false,
@@ -908,26 +874,29 @@ app.post('/test-message-processing', async (req, res) => {
                 body: 'Hello test message'
             }
         };
-        
+
         console.log('🧪 Testing message handler with:', testMessage);
-        
+
         // Clear any existing response tracking for this test message
-        if (messageHandler.responseTracker) {
+        if (messageHandler && messageHandler.responseTracker) {
             messageHandler.responseTracker.delete(testMessage.id);
         }
-        
+
         const result = await messageHandler.handleIncomingMessage(testMessage);
-        
+
         console.log('✅ Test message processed successfully:', result);
-        
+
+        // Check if response was sent using MessageStatusService
+        const hasResponded = await messageStatusService.hasResponseBeenSent(testMessage.id);
+
         res.json({
             success: true,
             message: 'Message handler working correctly',
             testMessage,
             result,
-            responsesSent: messageHandler.responseTracker.has(testMessage.id) ? 1 : 0
+            responsesSent: hasResponded ? 1 : 0
         });
-        
+
     } catch (error) {
         console.error('❌ Test message processing failed:', error);
         res.status(500).json({
@@ -1152,10 +1121,18 @@ app.get('/cron/status', (req, res) => {
 app.post('/cron/execute/:jobName', async (req, res) => {
     try {
         const { jobName } = req.params;
-        const { cleanupLegacyConversations } = await import('./cron/jobs/cleanupJobs.js');
+        const { cleanupLegacyConversations, cleanupMessageStatus } = await import('./cron/jobs/cleanupJobs.js');
         
         if (jobName === 'cleanup-legacy-conversations') {
             const result = await cleanupLegacyConversations();
+            res.json({
+                success: true,
+                jobName,
+                result,
+                timestamp: new Date().toISOString()
+            });
+        } else if (jobName === 'cleanup-message-status') {
+            const result = await cleanupMessageStatus();
             res.json({
                 success: true,
                 jobName,
@@ -1166,7 +1143,7 @@ app.post('/cron/execute/:jobName', async (req, res) => {
             res.status(404).json({
                 success: false,
                 error: 'Job not found',
-                availableJobs: ['cleanup-legacy-conversations']
+                availableJobs: ['cleanup-legacy-conversations', 'cleanup-message-status']
             });
         }
     } catch (error) {
@@ -1225,6 +1202,182 @@ app.get('/analytics/recent-calls', async (req, res) => {
         await mongoLogger.logError(error, { endpoint: 'analytics-recent-calls' });
         res.status(500).json({
             error: 'Failed to get recent calls',
+            details: error.message
+        });
+    }
+});
+
+// Message Status Management Endpoints
+
+// Get message status by message ID
+app.get('/message-status/:messageId', async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const status = await messageStatusService.getMessageStatus(messageId);
+
+        if (!status) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message status not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            messageStatus: {
+                messageId: status.messageId,
+                from: status.from,
+                messageType: status.messageType,
+                processingStatus: status.processingStatus,
+                responseStatus: status.responseStatus,
+                receivedAt: status.receivedAt,
+                processedAt: status.processedAt,
+                respondedAt: status.respondedAt,
+                responseMessageId: status.responseMessageId,
+                responseType: status.responseType,
+                processingError: status.processingError,
+                responseError: status.responseError,
+                retryCount: status.retryCount
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting message status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get message status',
+            details: error.message
+        });
+    }
+});
+
+// Get unprocessed messages
+app.get('/message-status/unprocessed', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const unprocessedMessages = await messageStatusService.getUnprocessedMessages(limit);
+
+        res.json({
+            success: true,
+            count: unprocessedMessages.length,
+            unprocessedMessages: unprocessedMessages.map(msg => ({
+                messageId: msg.messageId,
+                from: msg.from,
+                messageType: msg.messageType,
+                receivedAt: msg.receivedAt,
+                processingStatus: msg.processingStatus,
+                retryCount: msg.retryCount
+            }))
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting unprocessed messages:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get unprocessed messages',
+            details: error.message
+        });
+    }
+});
+
+// Get unresponded messages
+app.get('/message-status/unresponded', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const unrespondedMessages = await messageStatusService.getUnrespondedMessages(limit);
+
+        res.json({
+            success: true,
+            count: unrespondedMessages.length,
+            unrespondedMessages: unrespondedMessages.map(msg => ({
+                messageId: msg.messageId,
+                from: msg.from,
+                messageType: msg.messageType,
+                receivedAt: msg.receivedAt,
+                processedAt: msg.processedAt,
+                responseStatus: msg.responseStatus,
+                retryCount: msg.retryCount
+            }))
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting unresponded messages:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get unresponded messages',
+            details: error.message
+        });
+    }
+});
+
+// Reset message status (for debugging/testing)
+app.post('/message-status/reset/:messageId', async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const status = await messageStatusService.resetMessageStatus(messageId);
+
+        res.json({
+            success: true,
+            message: 'Message status reset successfully',
+            messageId,
+            newStatus: {
+                processingStatus: status.processingStatus,
+                responseStatus: status.responseStatus,
+                retryCount: status.retryCount
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error resetting message status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to reset message status',
+            details: error.message
+        });
+    }
+});
+
+// Get message status statistics
+app.get('/message-status/stats', async (req, res) => {
+    try {
+        const hoursBack = parseInt(req.query.hours) || 24;
+        const stats = await messageStatusService.getStatistics(hoursBack);
+
+        res.json({
+            success: true,
+            statistics: stats,
+            timeRange: `${hoursBack} hours`,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting message status statistics:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get message status statistics',
+            details: error.message
+        });
+    }
+});
+
+// Cleanup old message status entries
+app.post('/message-status/cleanup', async (req, res) => {
+    try {
+        const daysOld = parseInt(req.query.days) || 7;
+        const result = await messageStatusService.cleanupOldEntries(daysOld);
+
+        res.json({
+            success: true,
+            message: `Cleaned up ${result.deletedCount} old message status entries`,
+            deletedCount: result.deletedCount,
+            daysOld
+        });
+
+    } catch (error) {
+        console.error('❌ Error cleaning up message status entries:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to cleanup message status entries',
             details: error.message
         });
     }

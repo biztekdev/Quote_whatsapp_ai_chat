@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
 import mongoLogger from '../services/mongoLogger.js';
+import messageStatusService from '../services/messageStatusService.js';
 import { Product, ProductCategory } from '../models/productModel.js';
 import { Material } from '../models/materialModel.js';
 import { ProductFinish } from '../models/finishModel.js';
@@ -15,88 +16,164 @@ class MessageHandler {
         this.whatsappService = whatsappService;
         this.wit = wit;
         this.witService = new WitService();
-        // Track responses to prevent duplicates
-        this.responseTracker = new Map();
+        // Remove old responseTracker - now using MessageStatusService
     }
 
-    // Helper method to track if we've already responded to a message
-    hasResponded(messageId) {
-        return this.responseTracker.has(messageId);
+    // Check if we've already responded to a message using MessageStatusService
+    async hasResponded(messageId) {
+        return await messageStatusService.hasResponseBeenSent(messageId);
     }
 
-    // Mark that we've responded to a message
-    markAsResponded(messageId) {
-        this.responseTracker.set(messageId, Date.now());
-        
-        // Clean up old entries (keep only last 1000)
-        if (this.responseTracker.size > 1000) {
-            const entries = Array.from(this.responseTracker.entries());
-            this.responseTracker.clear();
-            // Keep the most recent 500 entries
-            entries.slice(-500).forEach(([id, timestamp]) => {
-                this.responseTracker.set(id, timestamp);
-            });
-        }
+    // Mark that we've responded to a message using MessageStatusService
+    async markAsResponded(messageId, responseMessageId = null, responseType = 'text') {
+        await messageStatusService.markResponseAsSent(messageId, responseMessageId, responseType);
     }
 
-    // Send message only if we haven't already responded
+    // Send message only if we haven't already responded using MessageStatusService
     async sendMessageOnce(messageId, to, message, type = 'text') {
-        if (this.hasResponded(messageId)) {
-            console.log(`⏭️ Already responded to message ${messageId}, skipping duplicate response`);
-            await mongoLogger.warn('Duplicate response prevented', { 
-                messageId, 
-                to, 
-                message: message.substring(0, 100) + '...',
-                source: 'sendMessageOnce'
-            });
-            return null;
-        }
+        try {
+            // Check if we can send response
+            const canSend = await messageStatusService.canSendResponse(messageId);
 
-        this.markAsResponded(messageId);
-        console.log(`📤 Sending response for message ${messageId}`);
-        return await this.whatsappService.sendMessage(to, message, type);
+            if (!canSend) {
+                console.log(`⏭️ Already responded to message ${messageId}, skipping duplicate response`);
+                await mongoLogger.warn('Duplicate response prevented', {
+                    messageId,
+                    to,
+                    message: message.substring(0, 100) + '...',
+                    source: 'sendMessageOnce'
+                });
+                return null;
+            }
+
+            // Mark response as sending
+            await messageStatusService.markResponseAsSending(messageId);
+
+            console.log(`📤 Sending response for message ${messageId}`);
+
+            try {
+                // Send the message
+                const result = await this.whatsappService.sendMessage(to, message, type);
+
+                // Mark response as sent
+                const responseMessageId = result?.messages?.[0]?.id || null;
+                await messageStatusService.markResponseAsSent(messageId, responseMessageId, type);
+
+                return result;
+
+            } catch (sendError) {
+                // Mark response as failed
+                await messageStatusService.markResponseAsFailed(messageId, sendError.message);
+                throw sendError;
+            }
+
+        } catch (error) {
+            console.error(`❌ Error in sendMessageOnce for message ${messageId}:`, error);
+            await mongoLogger.logError(error, {
+                source: 'sendMessageOnce',
+                messageId,
+                to,
+                error: error.message
+            });
+            throw error;
+        }
     }
 
     async handleIncomingMessage(message, value = null) {
+        const messageId = message.id;
+        const from = message.from;
+        const messageType = message.type;
+
         try {
-            const messageType = message.type;
-            const from = message.from;
-            const messageId = message.id;
             await mongoLogger.logMessage(message, from);
             await mongoLogger.info('Message received', { messageType, from, messageId });
+
+            // Initialize message status tracking
+            await messageStatusService.initializeMessageStatus(
+                messageId,
+                from,
+                messageType,
+                message, // webhookData
+                null // conversationId - can be set later if needed
+            );
+
+            // Check if message can be processed
+            const canProcess = await messageStatusService.canProcessMessage(messageId);
+            if (!canProcess) {
+                console.log(`⏭️ Message ${messageId} already processed, skipping`);
+                await mongoLogger.info('Message already processed, skipping', { messageId, from });
+                return;
+            }
+
+            // Mark message as processing
+            await messageStatusService.markAsProcessing(messageId);
 
             // Mark message as read
             // await this.whatsappService.markAsRead(messageId);
 
             await mongoLogger.info('Processing message type', { messageType });
-            switch (messageType) {
-                case 'text':
-                    await this.handleTextMessage(message, from);
-                    break;
-                case 'image':
-                    await this.handleImageMessage(message, from);
-                    break;
-                case 'document':
-                    await this.handleDocumentMessage(message, from);
-                    break;
-                case 'audio':
-                    await this.handleAudioMessage(message, from);
-                    break;
-                case 'video':
-                    await this.handleVideoMessage(message, from);
-                    break;
-                case 'interactive':
-                    await this.handleInteractiveMessage(message, from);
-                    break;
-                default:
-                    await mongoLogger.warn('Unsupported message type', { messageType });
-                    await this.whatsappService.sendMessage(
-                        from,
-                        "Sorry, I don't support this type of message yet."
-                    );
+
+            try {
+                switch (messageType) {
+                    case 'text':
+                        await this.handleTextMessage(message, from);
+                        break;
+                    case 'image':
+                        await this.handleImageMessage(message, from);
+                        break;
+                    case 'document':
+                        await this.handleDocumentMessage(message, from);
+                        break;
+                    case 'audio':
+                        await this.handleAudioMessage(message, from);
+                        break;
+                    case 'video':
+                        await this.handleVideoMessage(message, from);
+                        break;
+                    case 'interactive':
+                        await this.handleInteractiveMessage(message, from);
+                        break;
+                    default:
+                        await mongoLogger.warn('Unsupported message type', { messageType });
+                        await this.sendMessageOnce(
+                            messageId,
+                            from,
+                            "Sorry, I don't support this type of message yet.",
+                            'text'
+                        );
+                }
+
+                // Mark message as processed successfully
+                await messageStatusService.markAsProcessed(messageId);
+
+            } catch (processingError) {
+                // Mark message processing as failed
+                await messageStatusService.markAsFailed(messageId, processingError.message);
+                throw processingError;
             }
+
         } catch (error) {
-            await mongoLogger.logError(error, { source: 'message-handler' });
+            await mongoLogger.logError(error, {
+                source: 'message-handler',
+                messageId,
+                from,
+                messageType
+            });
+
+            // Try to send error message if we haven't already responded
+            try {
+                const hasResponded = await this.hasResponded(messageId);
+                if (!hasResponded) {
+                    await this.sendMessageOnce(
+                        messageId,
+                        from,
+                        "Sorry, I encountered an error processing your message. Please try again.",
+                        'text'
+                    );
+                }
+            } catch (sendError) {
+                console.error('Error sending error message:', sendError);
+            }
         }
     }
 

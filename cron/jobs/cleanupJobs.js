@@ -1,5 +1,6 @@
 import { LegacyConversationState } from '../../models/conversationModels.js';
 import mongoLogger from '../../services/mongoLogger.js';
+import messageStatusService from '../../services/messageStatusService.js';
 
 /**
  * Update legacy conversation states that are older than 10 minutes to set isActive: false
@@ -96,6 +97,49 @@ export async function getLegacyConversationStats() {
         };
     } catch (error) {
         await mongoLogger.error('❌ Error getting legacy conversation stats:', error);
+        throw error;
+    }
+}
+
+/**
+ * Clean up old message status entries
+ * This job runs daily to remove message status entries older than 7 days
+ */
+export async function cleanupMessageStatus(daysOld = 7) {
+    try {
+        const result = await messageStatusService.cleanupOldEntries(daysOld);
+
+        if (result.deletedCount > 0) {
+            await mongoLogger.info(`🧹 Cleaned up ${result.deletedCount} message status entries older than ${daysOld} days`);
+        } else {
+            await mongoLogger.debug('🔍 No old message status entries found for cleanup');
+        }
+
+        return {
+            success: true,
+            deletedCount: result.deletedCount,
+            daysOld,
+            timestamp: new Date().toISOString()
+        };
+    } catch (error) {
+        await mongoLogger.error('❌ Error cleaning up message status entries:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get message status statistics
+ */
+export async function getMessageStatusStats() {
+    try {
+        const stats = await messageStatusService.getStatistics(24); // Last 24 hours
+
+        return {
+            ...stats,
+            timestamp: new Date().toISOString()
+        };
+    } catch (error) {
+        await mongoLogger.error('❌ Error getting message status stats:', error);
         throw error;
     }
 }

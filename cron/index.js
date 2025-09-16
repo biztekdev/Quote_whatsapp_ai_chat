@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { cleanupLegacyConversations } from './jobs/cleanupJobs.js';
+import { cleanupLegacyConversations, cleanupMessageStatus } from './jobs/cleanupJobs.js';
 import mongoLogger from '../services/mongoLogger.js';
 
 class CronManager {
@@ -15,11 +15,12 @@ class CronManager {
         try {
             await mongoLogger.info('🕐 Initializing cron jobs...');
             
-            // Register only the inactive conversation state cleanup job
-            // this.registerJob('cleanup-legacy-conversations', '*/3 * * * *', cleanupLegacyConversations);
+            // Register cleanup jobs
+            this.registerJob('cleanup-legacy-conversations', '*/3 * * * *', cleanupLegacyConversations);
+            this.registerJob('cleanup-message-status', '0 2 * * *', cleanupMessageStatus);
             
             this.isRunning = true;
-            await mongoLogger.info('✅ Cron job initialized successfully - only inactive conversation state cleanup');
+            await mongoLogger.info('✅ Cron jobs initialized successfully');
         } catch (error) {
             await mongoLogger.error('❌ Failed to initialize cron jobs:', error);
             throw error;
