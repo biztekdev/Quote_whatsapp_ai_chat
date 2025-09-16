@@ -336,19 +336,19 @@ app.post('/webhook', async (req, res) => {
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
        
-        if (!hasMessages) {
-            console.log(`⚠️ No messages found, skipping`);
-            return res.status(200).json({
-                status: 'success',
-                message: 'No messages to process',
-                processingTime: `${responseDelay}ms`,
-                timestamp: new Date().toISOString(),
-                webhookId: webhookId
-            });
-        }
+        // if (!hasMessages) {
+        //     console.log(`⚠️ No messages found, skipping`);
+        //     return res.status(200).json({
+        //         status: 'success',
+        //         message: 'No messages to process',
+        //         processingTime: `${responseDelay}ms`,
+        //         timestamp: new Date().toISOString(),
+        //         webhookId: webhookId
+        //     });
+        // }
         
         // Start async processing without blocking the response
-        processMessagesAsync(webhookData, startTime).catch(error => {
+        await processMessagesAsync(webhookData, startTime).catch(error => {
             console.error(`❌ Async processing error:`, error.message);
         });
         
