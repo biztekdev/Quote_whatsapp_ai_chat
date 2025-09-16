@@ -336,12 +336,12 @@ app.post('/webhook', async (req, res) => {
         console.log(`📨 [${webhookId}] Webhook received from WhatsApp`);
         
         // IMMEDIATELY respond to WhatsApp to prevent retries
-        const responseTime = Date.now();
-        res.status(200).json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            webhookId: webhookId
-        });
+        // const responseTime = Date.now();
+        // res.status(200).json({
+        //     status: 'ok',
+        //     timestamp: new Date().toISOString(),
+        //     webhookId: webhookId
+        // });
         
         const responseDelay = Date.now() - startTime;
         // Response sent to WhatsApp
