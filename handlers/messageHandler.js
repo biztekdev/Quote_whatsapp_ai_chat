@@ -88,6 +88,13 @@ class MessageHandler {
             await mongoLogger.logMessage(message, from);
             await mongoLogger.info('Message received', { messageType, from, messageId });
 
+            // Check if conversation is already completed before processing
+            const conversationState = await conversationService.getConversationState(from);
+            if (conversationState.conversationData?.completed || conversationState.currentStep === 'completed') {
+                console.log(`⏭️ Conversation already completed for ${from}, skipping message processing`);
+                return;
+            }
+
             // Initialize message status tracking
             await messageStatusService.initializeMessageStatus(
                 messageId,
@@ -181,6 +188,13 @@ class MessageHandler {
         let messageText = 'unknown';
         try {
             messageText = message.text.body;
+
+            // Check if conversation is already completed
+            const conversationState = await conversationService.getConversationState(from);
+            if (conversationState.conversationData?.completed || conversationState.currentStep === 'completed') {
+                console.log(`⏭️ Conversation already completed for ${from}, skipping text message processing`);
+                return;
+            }
 
             // Check if user wants to start a new quote
             const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
@@ -753,6 +767,12 @@ class MessageHandler {
         try {
             const currentStep = conversationState.currentStep;
             const conversationData = conversationState.conversationData || {};
+
+            // Check if conversation is already completed
+            if (conversationData.completed || currentStep === 'completed') {
+                console.log(`⏭️ Conversation already completed for ${from}, skipping processing`);
+                return;
+            }
 
             await mongoLogger.info('Processing conversation step', { currentStep, from });
 
@@ -1624,6 +1644,12 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                 // Check if user is responding to PDF request after pricing is done
                 if (conversationData.pricing_done && !conversationData.wantsPdf) {
                     if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
+                        // Check if already completed to prevent duplicate processing
+                        if (conversationData.completed) {
+                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate PDF generation`);
+                            return;
+                        }
+
                         // User wants PDF, generate and send it
                         await conversationService.updateConversationState(from, {
                             'conversationData.wantsPdf': true
@@ -1650,6 +1676,12 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         });
 
                     } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
+                        // Check if already completed to prevent duplicate processing
+                        if (conversationData.completed) {
+                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate completion`);
+                            return;
+                        }
+
                         // User doesn't want PDF, end conversation
                         await this.sendMessageOnce(
                             message.id,

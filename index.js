@@ -198,9 +198,32 @@ async function processMessagesAsync(webhookData, startTime) {
                 const change = entry.changes[0];
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
 
-                    // Process each message in the webhook
-                    for (let i = 0; i < change.value.messages.length; i++) {
-                        const message = change.value.messages[i];
+                    // Filter out messages that are from us (our own sent messages)
+                    const userMessages = change.value.messages.filter(message => {
+                        // Skip messages that don't have a 'from' field or are from our number
+                        if (!message.from) return false;
+
+                        // Skip messages that are status updates or sent by us
+                        // WhatsApp sometimes sends webhooks with our own messages
+                        const isFromUs = message.from === process.env.WHATSAPP_PHONE_NUMBER_ID ||
+                                       message.from === change.value.metadata?.phone_number_id;
+
+                        if (isFromUs) {
+                            console.log(`⏭️ [${processingId}] Skipping our own message: ${message.id}`);
+                            return false;
+                        }
+
+                        return true;
+                    });
+
+                    if (userMessages.length === 0) {
+                        console.log(`⚠️ [${processingId}] No user messages found in webhook data - all messages filtered out`);
+                        return;
+                    }
+
+                    // Process each user message in the webhook
+                    for (let i = 0; i < userMessages.length; i++) {
+                        const message = userMessages[i];
                         const messageId = message.id;
                         const from = message.from;
                         const messageType = message.type;
@@ -208,7 +231,7 @@ async function processMessagesAsync(webhookData, startTime) {
 
                         const messageProcessingId = `${processingId}_msg_${i}`;
 
-                        console.log(`🔄 [${messageProcessingId}] Processing message: ${messageId} from ${from} type ${messageType}`);
+                        console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
 
                         // Initialize message status tracking
                         await messageStatusService.initializeMessageStatus(
@@ -251,8 +274,12 @@ async function processMessagesAsync(webhookData, startTime) {
                             throw messageError;
                         }
                     }
+                } else if (change.value && change.value.statuses && change.value.statuses.length > 0) {
+                    // This is a status update webhook - ignore it
+                    console.log(`ℹ️ [${processingId}] Status update webhook received - ignoring`);
+                    return;
                 } else {
-                    console.log(`⚠️ [${processingId}] No messages found in webhook data - skipping (likely status update)`);
+                    console.log(`⚠️ [${processingId}] No messages or statuses found in webhook data - skipping`);
                 }
             } else {
                 console.log(`⚠️ [${processingId}] No changes found in webhook data`);
@@ -580,6 +607,8 @@ app.get('/latest-webhook', async (req, res) => {
                     hasValue: !!webhookData?.entry?.[0]?.changes?.[0]?.value,
                     hasMessages: !!webhookData?.entry?.[0]?.changes?.[0]?.value?.messages,
                     messageCount: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
+                    hasStatuses: !!webhookData?.entry?.[0]?.changes?.[0]?.value?.statuses,
+                    statusCount: webhookData?.entry?.[0]?.changes?.[0]?.value?.statuses?.length || 0,
                     firstMessage: webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || null,
                     field: webhookData?.entry?.[0]?.changes?.[0]?.field
                 }
