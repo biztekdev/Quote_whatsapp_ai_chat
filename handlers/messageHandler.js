@@ -5,6 +5,7 @@ import mongoLogger from '../services/mongoLogger.js';
 import { Product, ProductCategory } from '../models/productModel.js';
 import { Material } from '../models/materialModel.js';
 import { ProductFinish } from '../models/finishModel.js';
+import { ProcessedMessage } from '../models/processedMessageModel.js';
 
 
 dotenv.config();
@@ -57,6 +58,8 @@ class MessageHandler {
     }
 
     async handleIncomingMessage(message, value = null) {
+        const messageFound = await ProcessedMessage.findOne({ messageId: message.id });
+        await mongoLogger.info('Message found1111111111', messageFound);
         await mongoLogger.info('Message received1111111111', message);
         try {
             const messageType = message.type;
