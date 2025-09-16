@@ -38,11 +38,11 @@ class WitService {
     async processMessage(message, options = {}) {
         try {
             console.log(`Token for Wit.ai: ${this.accessToken}`);
-            if (!this.client) {
-                console.log('Wit.ai client not initialized');
+            // if (!this.client) {
+            //     console.log('Wit.ai client not initialized');
                 
-                return this.getMockResponse(message);
-            }
+            //     return this.getMockResponse(message);
+            // }
 
             if (!message || typeof message !== 'string') {
                 throw new Error('Invalid message: message must be a non-empty string');
