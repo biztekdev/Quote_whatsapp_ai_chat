@@ -1631,8 +1631,9 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
 
                         await this.generateAndSendPDF(from, conversationData);
                         
-                        // Send completion message
-                        await this.whatsappService.sendMessage(
+                        // Send completion message using sendMessageOnce to prevent duplicates
+                        await this.sendMessageOnce(
+                            message.id,
                             from,
                             `✅ **Quote Complete!** 
 
@@ -1650,7 +1651,8 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
 
                     } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
                         // User doesn't want PDF, end conversation
-                        await this.whatsappService.sendMessage(
+                        await this.sendMessageOnce(
+                            message.id,
                             from,
                             `✅ **Quote Complete!** 
 
@@ -1667,7 +1669,8 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         });
                     } else {
                         // Unclear response to PDF question
-                        await this.whatsappService.sendMessage(
+                        await this.sendMessageOnce(
+                            message.id,
                             from,
                             "Would you like a PDF quote? Please reply with 'Yes' for PDF or 'No' to finish."
                         );
@@ -1903,7 +1906,7 @@ Have a great day! 🌟`;
                 from: from
             });
             
-            // Fallback message
+            // Fallback message - direct send for error cases
             await this.whatsappService.sendMessage(
                 from,
                 "Sorry, I couldn't generate the PDF at the moment. However, you have all the pricing information above. Please contact our support if you need assistance."
