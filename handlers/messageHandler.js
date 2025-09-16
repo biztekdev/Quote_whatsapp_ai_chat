@@ -213,8 +213,8 @@ class MessageHandler {
                 return;
             }
 
-            // Get current conversation state
-            let conversationState = await conversationService.getConversationState(from);
+            // Use the existing conversation state instead of redeclaring
+            // conversationState is already declared above
 
             // Process message with Wit.ai first (with error handling)
             let witResponse = null;
