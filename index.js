@@ -348,19 +348,19 @@ app.post('/webhook', async (req, res) => {
         // }
         
         // Start async processing without blocking the response
-        await processMessagesAsync(webhookData, startTime).catch(error => {
+         processMessagesAsync(webhookData, startTime).catch(error => {
             console.error(`❌ Async processing error:`, error.message);
         });
         
         // Return immediate response to WhatsApp
-        return res.status(200).json({
-            status: 'success',
-            message: 'Webhook received and processing started',
-            messageCount: messageCount,
-            processingTime: `${responseDelay}ms`,
-            timestamp: new Date().toISOString(),
-            webhookId: webhookId
-        });
+        // return res.status(200).json({
+        //     status: 'success',
+        //     message: 'Webhook received and processing started',
+        //     messageCount: messageCount,
+        //     processingTime: `${responseDelay}ms`,
+        //     timestamp: new Date().toISOString(),
+        //     webhookId: webhookId
+        // });
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
