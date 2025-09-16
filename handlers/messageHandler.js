@@ -57,6 +57,7 @@ class MessageHandler {
     }
 
     async handleIncomingMessage(message, value = null) {
+        await mongoLogger.info('Message received1111111111', message);
         try {
             const messageType = message.type;
             const from = message.from;
