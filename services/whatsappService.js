@@ -286,18 +286,60 @@ class WhatsAppService {
         }
     }
 
+    // Upload media from buffer (for Vercel compatibility)
+    async uploadMediaFromBuffer(pdfBuffer, mimeType = 'application/pdf') {
+        try {
+            const FormData = (await import('form-data')).default;
+            
+            const form = new FormData();
+            form.append('messaging_product', 'whatsapp');
+            form.append('file', pdfBuffer, {
+                contentType: mimeType,
+                filename: `quote_${Date.now()}.pdf`
+            });
+            form.append('type', mimeType);
+
+            const response = await axios.post(
+                `https://graph.facebook.com/${this.version}/${this.phoneNumberId}/media`,
+                form,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        ...form.getHeaders()
+                    }
+                }
+            );
+
+            console.log('Media uploaded from buffer successfully:', response.data);
+            return response.data.id;
+        } catch (error) {
+            console.error('Error uploading media from buffer:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
     // Send document using media ID
     async sendDocument(to, options = {}) {
         try {
             let mediaId;
             
+            // If buffer is provided, upload directly from buffer (Vercel-friendly)
+            if (options.buffer) {
+                mediaId = await this.uploadMediaFromBuffer(options.buffer, 'application/pdf');
+            }
             // If link is provided, it's a file path that needs to be uploaded
-            if (options.link && !options.link.startsWith('http')) {
+            else if (options.link && !options.link.startsWith('http')) {
                 mediaId = await this.uploadMedia(options.link, 'application/pdf');
-            } else if (options.id) {
+            } 
+            // If it's a URL, use it directly
+            else if (options.link && options.link.startsWith('http')) {
+                mediaId = options.link;
+            } 
+            // If media ID is provided directly
+            else if (options.id) {
                 mediaId = options.id;
             } else {
-                throw new Error('Either file path (link) or media ID (id) must be provided');
+                throw new Error('Either buffer, file path (link), URL, or media ID (id) must be provided');
             }
 
             const payload = {

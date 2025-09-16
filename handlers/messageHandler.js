@@ -1788,20 +1788,35 @@ Have a great day! 🌟`;
         try {
             console.log("Generating PDF for:", from);
             
-            // Create PDF document using PDFKit or similar library
+            // Create PDF document using PDFKit
             const pdfBuffer = await this.createPDFDocument(conversationData);
             
-            // Save PDF to temporary location or cloud storage
-            const pdfPath = await this.savePDFFile(pdfBuffer, from);
-            
-            // Send PDF via WhatsApp
-            await this.whatsappService.sendDocument(from, {
-                link: pdfPath,
-                filename: `Quote_${Date.now()}.pdf`,
-                caption: "📄 Here's your detailed quote PDF!"
-            });
-            
-            console.log("PDF sent successfully to:", from);
+            // For Vercel compatibility, try buffer approach first
+            try {
+                // Send PDF directly from buffer (Vercel-friendly)
+                await this.whatsappService.sendDocument(from, {
+                    buffer: pdfBuffer,
+                    filename: `Quote_${Date.now()}.pdf`,
+                    caption: "📄 Here's your detailed quote PDF!"
+                });
+                
+                console.log("PDF sent successfully via buffer to:", from);
+                
+            } catch (bufferError) {
+                console.log("Buffer upload failed, trying file approach:", bufferError.message);
+                
+                // Fallback to file approach
+                const tempPath = await this.createTempPDF(pdfBuffer, from);
+                
+                // Send PDF via WhatsApp
+                await this.whatsappService.sendDocument(from, {
+                    link: tempPath,
+                    filename: `Quote_${Date.now()}.pdf`,
+                    caption: "📄 Here's your detailed quote PDF!"
+                });
+                
+                console.log("PDF sent successfully via file to:", from);
+            }
             
         } catch (error) {
             console.error('Error generating/sending PDF:', error);
@@ -2011,27 +2026,50 @@ Have a great day! 🌟`;
         }
     }
 
-    async savePDFFile(pdfBuffer, from) {
+    async createTempPDF(pdfBuffer, from) {
         try {
-            const fs = await import('fs/promises');
-            const path = await import('path');
-            
-            // Create temp directory if it doesn't exist
-            const tempDir = path.join(process.cwd(), 'temp', 'pdfs');
-            await fs.mkdir(tempDir, { recursive: true });
-            
-            // Generate unique filename
-            const filename = `quote_${from}_${Date.now()}.pdf`;
-            const filepath = path.join(tempDir, filename);
-            
-            // Save PDF file
-            await fs.writeFile(filepath, pdfBuffer);
-            
-            console.log('PDF saved to:', filepath);
-            return filepath;
+            // Check if we're in Vercel environment
+            if (process.env.VERCEL) {
+                // For Vercel, use /tmp directory which is writable
+                const fs = await import('fs/promises');
+                const path = await import('path');
+                const os = await import('os');
+                
+                // Use system temp directory
+                const tempDir = path.join(os.tmpdir(), 'whatsapp-pdfs');
+                await fs.mkdir(tempDir, { recursive: true });
+                
+                // Generate unique filename
+                const filename = `quote_${from}_${Date.now()}.pdf`;
+                const filepath = path.join(tempDir, filename);
+                
+                // Save PDF file
+                await fs.writeFile(filepath, pdfBuffer);
+                
+                console.log('PDF saved to Vercel temp:', filepath);
+                return filepath;
+            } else {
+                // For local development, use the existing temp directory
+                const fs = await import('fs/promises');
+                const path = await import('path');
+                
+                // Create temp directory if it doesn't exist
+                const tempDir = path.join(process.cwd(), 'temp', 'pdfs');
+                await fs.mkdir(tempDir, { recursive: true });
+                
+                // Generate unique filename
+                const filename = `quote_${from}_${Date.now()}.pdf`;
+                const filepath = path.join(tempDir, filename);
+                
+                // Save PDF file
+                await fs.writeFile(filepath, pdfBuffer);
+                
+                console.log('PDF saved to local temp:', filepath);
+                return filepath;
+            }
             
         } catch (error) {
-            console.error('Error saving PDF file:', error);
+            console.error('Error creating temp PDF file:', error);
             throw error;
         }
     }
