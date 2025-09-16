@@ -1830,6 +1830,7 @@ Have a great day! 🌟`;
         }
     }
 
+    
     async sendPricingTable(from, conversationData, pricingData) {
         try {
             const { qty, unit_cost } = pricingData;
