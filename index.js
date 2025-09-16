@@ -336,6 +336,7 @@ app.post('/webhook', async (req, res) => {
             console.error(`❌ Async processing error:`, error.message);
         });
         
+        
         // Return immediate response to WhatsApp
         // return res.status(200).json({
         //     status: 'success',
