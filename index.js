@@ -322,12 +322,12 @@ app.post('/webhook', async (req, res) => {
     try {
         const responseDelay = Date.now() - startTime;
         
-        try {
-            await webhookService.storeWebhook(req.body);
-            console.log(`📝 [${webhookId}] Webhook stored in service`);
-        } catch (storeError) {
-            console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
-        }
+        // try {
+        //     await webhookService.storeWebhookCall(req, res);
+        //     console.log(`📝 [${webhookId}] Webhook stored in service`);
+        // } catch (storeError) {
+        //     console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
+        // }
         
         const webhookData = req.body;
         
@@ -335,7 +335,7 @@ app.post('/webhook', async (req, res) => {
         const messageCount = webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0;
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
-       
+       console.log("firstMessage ", firstMessage);
         // if (!hasMessages) {
         //     console.log(`⚠️ No messages found, skipping`);
         //     return res.status(200).json({

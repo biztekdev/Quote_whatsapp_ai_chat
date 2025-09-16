@@ -333,7 +333,6 @@ class MessageHandler {
                                     // Parse dimension values from the string
                                     const dimensionValues = this.parseDimensionValues(dimensions);
 
-                                    console.log("dimensions111111 ", dimensionValues);
                                     // Check if we have a selected product
                                     if (updatedData.selectedProduct && updatedData.selectedProduct.id) {
                                         try {
@@ -1541,53 +1540,106 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                 });
 
             } else {
-                // Process user's response to pricing question
+                // Process user's response
                 const response = messageText.toLowerCase().trim();
 
-                if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
-                    // User wants pricing, generate and send quote
-
-                    //if acknowledgement is true then generate and send quote
-                    //and user say yes then give him pricing
-                    const pricing = await this.getPricingForQuote(conversationData);
-                    console.log("pricing111111111 ", pricing);
-
-                    if (pricing && !pricing.error) {
-                        // Store pricing in conversation data
+                // Check if user is responding to PDF request after pricing is done
+                if (conversationData.pricing_done && !conversationData.wantsPdf) {
+                    if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
+                        // User wants PDF, generate and send it
                         await conversationService.updateConversationState(from, {
-                            'conversationData.pricingData': pricing,
-                            'conversationData.pricing_done': true,
-                            'conversationData.completed': true,
-                            currentStep: 'completed'
+                            'conversationData.wantsPdf': true
                         });
 
-                        // Send beautiful pricing table
-                        await this.sendPricingTable(from, conversationData, pricing);
-                    } else {
-                        // Handle pricing error
+                        await this.generateAndSendPDF(from, conversationData);
+                        
+                        // Send completion message
                         await this.whatsappService.sendMessage(
                             from,
-                            "Sorry, I couldn't get pricing information at the moment. Please try again later or contact our support team."
+                            `✅ **Quote Complete!** 
+
+Thank you for using our quote system! Your PDF has been generated and sent.
+
+Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
+                        );
+
+                        // Mark as fully completed
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.completed': true,
+                            currentStep: 'completed',
+                            isActive: false
+                        });
+
+                    } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
+                        // User doesn't want PDF, end conversation
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `✅ **Quote Complete!** 
+
+Thank you for using our quote system! 
+
+Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
+                        );
+
+                        // Mark as completed without PDF
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.completed': true,
+                            currentStep: 'completed',
+                            isActive: false
+                        });
+                    } else {
+                        // Unclear response to PDF question
+                        await this.whatsappService.sendMessage(
+                            from,
+                            "Would you like a PDF quote? Please reply with 'Yes' for PDF or 'No' to finish."
                         );
                     }
+                } else if (!conversationData.pricing_done) {
+                    // User is responding to initial pricing question
+                    if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
+                        // User wants pricing, generate and send quote
+                        const pricing = await this.getPricingForQuote(conversationData);
 
-                } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
-                    // User doesn't want pricing, end conversation gracefully
-                    const goodbyeMessage = `No problem! 😊 
+                        if (pricing && !pricing.error) {
+                            // Store pricing in conversation data
+                            await conversationService.updateConversationState(from, {
+                                'conversationData.pricingData': pricing,
+                                'conversationData.pricing_done': true
+                            });
+
+                            // Send beautiful pricing table
+                            await this.sendPricingTable(from, conversationData, pricing);
+                        } else {
+                            // Handle pricing error
+                            await this.whatsappService.sendMessage(
+                                from,
+                                "Sorry, I couldn't get pricing information at the moment. Please try again later or contact our support team."
+                            );
+                        }
+                    } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
+                        // User doesn't want pricing, end conversation gracefully
+                        const goodbyeMessage = `No problem! 😊 
 
 I'm always here to help you whenever you need a quote. Just say "Hi" or "Get Quote" anytime you're ready, and I'll be happy to assist you with pricing for your products.
 
 Have a great day! 🌟`;
 
-                    await this.whatsappService.sendMessage(from, goodbyeMessage);
+                        await this.whatsappService.sendMessage(from, goodbyeMessage);
 
-                    // Inactivate conversation
-                    await conversationService.updateConversationState(from, {
-                        currentStep: 'completed',
-                        isActive: false,
-                        'conversationData.completed': true
-                    });
+                        // Inactivate conversation
+                        await conversationService.updateConversationState(from, {
+                            currentStep: 'completed',
+                            isActive: false,
+                            'conversationData.completed': true
+                        });
 
+                    } else {
+                        // Unclear response, ask for clarification
+                        await this.whatsappService.sendMessage(
+                            from,
+                            "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
+                        );
+                    }
                 } else {
                     // Unclear response, ask for clarification
                     await this.whatsappService.sendMessage(
@@ -1729,6 +1781,258 @@ Have a great day! 🌟`;
                 `Unit Costs: $${pricingData.unit_cost.join(', $')}\n\n` +
                 "Would you like a PDF quote? Reply Yes or No."
             );
+        }
+    }
+
+    async generateAndSendPDF(from, conversationData) {
+        try {
+            console.log("Generating PDF for:", from);
+            
+            // Create PDF document using PDFKit or similar library
+            const pdfBuffer = await this.createPDFDocument(conversationData);
+            
+            // Save PDF to temporary location or cloud storage
+            const pdfPath = await this.savePDFFile(pdfBuffer, from);
+            
+            // Send PDF via WhatsApp
+            await this.whatsappService.sendDocument(from, {
+                link: pdfPath,
+                filename: `Quote_${Date.now()}.pdf`,
+                caption: "📄 Here's your detailed quote PDF!"
+            });
+            
+            console.log("PDF sent successfully to:", from);
+            
+        } catch (error) {
+            console.error('Error generating/sending PDF:', error);
+            await mongoLogger.logError(error, {
+                source: 'pdf-generation',
+                from: from
+            });
+            
+            // Fallback message
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I couldn't generate the PDF at the moment. However, you have all the pricing information above. Please contact our support if you need assistance."
+            );
+        }
+    }
+
+    async createPDFDocument(conversationData) {
+        try {
+            // Import PDFKit dynamically
+            const PDFDocument = (await import('pdfkit')).default;
+            
+            const doc = new PDFDocument({ 
+                size: 'A4',
+                margin: 0,
+                layout: 'portrait'
+            });
+            const chunks = [];
+            
+            // Collect PDF data
+            doc.on('data', chunk => chunks.push(chunk));
+            doc.on('end', () => {});
+            
+            const pageWidth = doc.page.width;
+            const pageHeight = doc.page.height;
+            
+            // Set up colors
+            const primaryColor = '#000000';
+            const secondaryColor = '#333333';
+            const accentColor = '#FFA500'; // Orange for highlights
+            
+            // Background
+            doc.rect(0, 0, pageWidth, pageHeight).fill('#FFFFFF');
+            
+            // Vertical QUOTE text on the left
+            doc.save()
+               .translate(30, 100)
+               .rotate(-90)
+               .fontSize(48)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('QUOTE', 0, 0)
+               .restore();
+            
+            // Header section with logo area
+            const headerY = 50;
+            const contentStartX = 120;
+            
+            // Company logo area (simulated)
+            doc.fontSize(24)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('Print247', contentStartX, headerY)
+               .fontSize(16)
+               .font('Helvetica')
+               .text('.us', contentStartX + 80, headerY + 5);
+            
+            // Disclaimer section
+            const disclaimerY = headerY + 40;
+            doc.fontSize(10)
+               .fillColor(secondaryColor)
+               .font('Helvetica-Bold')
+               .text('Disclaimer:', contentStartX, disclaimerY)
+               .font('Helvetica')
+               .fontSize(8)
+               .text('We want to emphasize that our estimate is comprehensive, encompassing all essential operations and materials in line with industry standards. If you have any queries, please don\'t hesitate to reach out. The estimate remains valid for 30 days from the specified date, and pricing adjustments may occur after a final artwork inspection. The countdown for delivery initiation starts upon design file approval and payment receipt. We value your business and eagerly anticipate the opportunity to serve you in the future. Feel free to contact us for any further information or clarification you may need. Any additional tariff, duty, and taxes on goods at the time of arrival, if applicable, shall be paid by the receiver/customer.', contentStartX, disclaimerY + 15, {
+                   width: pageWidth - contentStartX - 50,
+                   align: 'left'
+               });
+            
+            // Quote details section
+            const detailsY = disclaimerY + 120;
+            const details = [
+                ['Query No:', `QT-${Date.now()}`],
+                ['Customer:', 'WhatsApp Customer'],
+                ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
+                ['No of Sku\'s:', '1'],
+                ['Turnaround Time:', '12 - 15 Business Days (*T&C Applies)'],
+                ['Shipping:', 'DAP (Delivered At Place)'],
+                ['Stock:', conversationData.selectedMaterial?.name || 'Standard Material'],
+                ['Finished Size:', conversationData.dimensions?.map(d => `${d.value}`).join(' x ') || 'Custom Size'],
+                ['Finishing:', 'CMYK 4/0 + DIE CUTTING + STRAIGHT LINE GLUING'],
+                ['Extra Finishes:', conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Standard Finish'],
+                ['Representative:', 'AI Assistant']
+            ];
+            
+            let currentY = detailsY;
+            details.forEach(([label, value]) => {
+                // Draw horizontal line
+                doc.moveTo(contentStartX, currentY)
+                   .lineTo(pageWidth - 50, currentY)
+                   .stroke('#CCCCCC');
+                
+                // Label and value
+                doc.fontSize(10)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text(label, contentStartX, currentY + 5)
+                   .font('Helvetica-Bold')
+                   .text(value, contentStartX + 200, currentY + 5);
+                
+                currentY += 25;
+            });
+            
+            // Final line
+            doc.moveTo(contentStartX, currentY)
+               .lineTo(pageWidth - 50, currentY)
+               .stroke('#CCCCCC');
+            
+            // Pricing table
+            const tableY = currentY + 30;
+            const tableStartX = contentStartX;
+            const colWidth = 100;
+            
+            if (conversationData.pricingData) {
+                const { qty, unit_cost } = conversationData.pricingData;
+                
+                // Table headers
+                doc.fontSize(12)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Tier\'s', tableStartX, tableY)
+                   .text('Tier 1', tableStartX + colWidth, tableY)
+                   .text('Tier 2', tableStartX + colWidth * 2, tableY)
+                   .text('Tier 3', tableStartX + colWidth * 3, tableY);
+                
+                // Draw header line
+                doc.moveTo(tableStartX, tableY + 15)
+                   .lineTo(tableStartX + colWidth * 4, tableY + 15)
+                   .stroke(primaryColor);
+                
+                // Quantities row
+                doc.fontSize(10)
+                   .font('Helvetica-Bold')
+                   .text('Quantities:', tableStartX, tableY + 25);
+                
+                qty.forEach((quantity, index) => {
+                    doc.text(quantity.toString(), tableStartX + colWidth * (index + 1), tableY + 25);
+                });
+                
+                // Unit Cost row
+                doc.text('Unit Cost:', tableStartX, tableY + 40);
+                unit_cost.forEach((cost, index) => {
+                    doc.text(cost.toFixed(3), tableStartX + colWidth * (index + 1), tableY + 40);
+                });
+                
+                // Estimate Price row
+                doc.text('Estimate Price:', tableStartX, tableY + 55);
+                qty.forEach((quantity, index) => {
+                    const totalPrice = (quantity * unit_cost[index]).toFixed(1);
+                    doc.text(totalPrice, tableStartX + colWidth * (index + 1), tableY + 55);
+                });
+                
+                // Draw table bottom line
+                doc.moveTo(tableStartX, tableY + 70)
+                   .lineTo(tableStartX + colWidth * 4, tableY + 70)
+                   .stroke(primaryColor);
+            }
+            
+            // Footer section
+            const footerY = pageHeight - 100;
+            
+            // Seal area (simulated)
+            doc.circle(contentStartX + 50, footerY, 30)
+               .stroke(primaryColor);
+            
+            doc.fontSize(8)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('PROUDLY BASED', contentStartX + 20, footerY - 10, { align: 'center' })
+               .text('IN THE USA', contentStartX + 20, footerY - 2, { align: 'center' })
+               .text('Print247.us', contentStartX + 20, footerY + 6, { align: 'center' });
+            
+            // Authorization section
+            doc.fontSize(10)
+               .font('Helvetica-Bold')
+               .text('SM. Authorized By', contentStartX, footerY + 40)
+               .text('_________________', contentStartX, footerY + 55);
+            
+            // Date
+            doc.text('Date', pageWidth - 100, footerY + 40)
+               .text('_________________', pageWidth - 100, footerY + 55)
+               .text(new Date().toLocaleDateString('en-US'), pageWidth - 100, footerY + 70);
+            
+            // Finalize PDF
+            doc.end();
+            
+            // Wait for PDF to be ready
+            return new Promise((resolve) => {
+                doc.on('end', () => {
+                    resolve(Buffer.concat(chunks));
+                });
+            });
+            
+        } catch (error) {
+            console.error('Error creating PDF document:', error);
+            throw error;
+        }
+    }
+
+    async savePDFFile(pdfBuffer, from) {
+        try {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            
+            // Create temp directory if it doesn't exist
+            const tempDir = path.join(process.cwd(), 'temp', 'pdfs');
+            await fs.mkdir(tempDir, { recursive: true });
+            
+            // Generate unique filename
+            const filename = `quote_${from}_${Date.now()}.pdf`;
+            const filepath = path.join(tempDir, filename);
+            
+            // Save PDF file
+            await fs.writeFile(filepath, pdfBuffer);
+            
+            console.log('PDF saved to:', filepath);
+            return filepath;
+            
+        } catch (error) {
+            console.error('Error saving PDF file:', error);
+            throw error;
         }
     }
 

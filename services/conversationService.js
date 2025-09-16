@@ -5,9 +5,9 @@ import crypto from 'crypto';
 class ConversationService {
     constructor() {
         // Initialize default products (non-blocking)
-        this.initializeDefaultProducts().catch(error => {
-            console.error('Failed to initialize default products:', error);
-        });
+        // this.initializeDefaultProducts().catch(error => {
+        //     console.error('Failed to initialize default products:', error);
+        // });
     }
 
     /**

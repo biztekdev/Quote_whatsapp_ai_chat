@@ -45,6 +45,7 @@ const conversationStateSchema = new mongoose.Schema({
         quoteAcknowledged: Boolean,
         completed: Boolean,
         pricing_done: Boolean,
+        wantsPdf: Boolean,
         pricingData: {
             status: String,
             qty: [Number],

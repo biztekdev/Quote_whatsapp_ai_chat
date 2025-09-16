@@ -253,6 +253,90 @@ class WhatsAppService {
             throw error;
         }
     }
+
+    // Upload media file and get media ID
+    async uploadMedia(filePath, mimeType = 'application/pdf') {
+        try {
+            const fs = await import('fs');
+            const FormData = (await import('form-data')).default;
+            
+            const form = new FormData();
+            form.append('messaging_product', 'whatsapp');
+            form.append('file', fs.createReadStream(filePath), {
+                contentType: mimeType
+            });
+            form.append('type', mimeType);
+
+            const response = await axios.post(
+                `https://graph.facebook.com/${this.version}/${this.phoneNumberId}/media`,
+                form,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        ...form.getHeaders()
+                    }
+                }
+            );
+
+            console.log('Media uploaded successfully:', response.data);
+            return response.data.id;
+        } catch (error) {
+            console.error('Error uploading media:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    // Send document using media ID
+    async sendDocument(to, options = {}) {
+        try {
+            let mediaId;
+            
+            // If link is provided, it's a file path that needs to be uploaded
+            if (options.link && !options.link.startsWith('http')) {
+                mediaId = await this.uploadMedia(options.link, 'application/pdf');
+            } else if (options.id) {
+                mediaId = options.id;
+            } else {
+                throw new Error('Either file path (link) or media ID (id) must be provided');
+            }
+
+            const payload = {
+                messaging_product: 'whatsapp',
+                to: to,
+                type: 'document',
+                document: {
+                    id: mediaId
+                }
+            };
+
+            // Add caption if provided
+            if (options.caption) {
+                payload.document.caption = options.caption;
+            }
+
+            // Add filename if provided
+            if (options.filename) {
+                payload.document.filename = options.filename;
+            }
+
+            const response = await axios.post(
+                `${this.baseURL}/messages`,
+                payload,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            console.log('Document sent successfully:', response.data);
+            return response.data;
+        } catch (error) {
+            console.error('Error sending document:', error.response?.data || error.message);
+            throw error;
+        }
+    }
 }
 
 export default WhatsAppService;
