@@ -204,7 +204,7 @@ class MessageHandler {
             messageText = message.text.body;
 
             // Check if conversation is already completed
-            const conversationState = await conversationService.getConversationState(from);
+            let conversationState = await conversationService.getConversationState(from);
             if (conversationState.conversationData?.completed || conversationState.currentStep === 'completed') {
                 console.log(`⏭️ Conversation already completed for ${from}, skipping text message processing`);
                 return;
