@@ -320,37 +320,8 @@ app.post('/webhook', async (req, res) => {
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
-        // Log incoming webhook immediately with detailed info
-        await mongoLogger.info('📨 Webhook received from WhatsApp', {
-            webhookId,
-            headers: {
-                'user-agent': req.get('User-Agent'),
-                'content-type': req.get('Content-Type'),
-                'x-hub-signature-256': req.get('X-Hub-Signature-256') ? 'Present' : 'Missing'
-            },
-            body: req.body,
-            timestamp: new Date().toISOString(),
-            step: 'WEBHOOK_RECEIVED'
-        });
-        
-        console.log(`📨 [${webhookId}] Webhook received from WhatsApp`);
-        
-        // IMMEDIATELY respond to WhatsApp to prevent retries
-        // const responseTime = Date.now();
-        // res.status(200).json({
-        //     status: 'ok',
-        //     timestamp: new Date().toISOString(),
-        //     webhookId: webhookId
-        // });
-        
         const responseDelay = Date.now() - startTime;
-        // Response sent to WhatsApp
         
-        console.log(`✅ [${webhookId}] Response sent to WhatsApp in ${responseDelay}ms`);
-        
-        // Webhook data processed
-        
-        // Also store in webhook service for debugging
         try {
             await webhookService.storeWebhook(req.body);
             console.log(`📝 [${webhookId}] Webhook stored in service`);
@@ -358,53 +329,42 @@ app.post('/webhook', async (req, res) => {
             console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
         }
         
-        // Log basic webhook info only
-        console.log('📋 Webhook received:', {
-            hasMessages: !!(req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.length),
-            messageCount: req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0
-        });
-        
-        // Raw webhook data logged to console only
-        
-        // Extract message from webhook payload
         const webhookData = req.body;
         
         // Log webhook data analysis
         const messageCount = webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0;
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
-        
-        console.log(`🔄 Processing ${messageCount} messages`);
-        
-        // Async processing started
-        
-        // If no messages found, skip processing
+       
         if (!hasMessages) {
             console.log(`⚠️ No messages found, skipping`);
-            return;
+            return res.status(200).json({
+                status: 'success',
+                message: 'No messages to process',
+                processingTime: `${responseDelay}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
         }
         
-        // Process messages asynchronously (don't await - fire and forget)
+        // Start async processing without blocking the response
         processMessagesAsync(webhookData, startTime).catch(error => {
             console.error(`❌ Async processing error:`, error.message);
+        });
+        
+        // Return immediate response to WhatsApp
+        return res.status(200).json({
+            status: 'success',
+            message: 'Webhook received and processing started',
+            messageCount: messageCount,
+            processingTime: `${responseDelay}ms`,
+            timestamp: new Date().toISOString(),
+            webhookId: webhookId
         });
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
         
-        console.error(`❌ [${webhookId}] Webhook error:`, error);
-        
-        // Log the error
-        await mongoLogger.error('❌ Webhook processing error', { 
-            webhookId,
-            error: error.message,
-            stack: error.stack,
-            processingTime: `${processingTime}ms`,
-            requestBody: req.body,
-            step: 'WEBHOOK_ERROR'
-        });
-        
-        // Still respond with 200 to WhatsApp to avoid retries (if not already sent)
         if (!res.headersSent) {
         res.status(200).json({
             status: 'error',
