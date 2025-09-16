@@ -171,10 +171,24 @@ class MessageHandler {
             try {
                 const hasResponded = await this.hasResponded(messageId);
                 if (!hasResponded) {
+                    // Provide more specific error messages based on error type
+                    let errorMessage = "Sorry, I encountered an error processing your message. Please try again.";
+                    
+                    if (error.message && error.message.includes('timeout')) {
+                        errorMessage = "The system is taking longer than expected. Please try again in a moment.";
+                    } else if (error.message && error.message.includes('network')) {
+                        errorMessage = "There seems to be a connection issue. Please check your internet and try again.";
+                    } else if (error.message && error.message.includes('database')) {
+                        errorMessage = "I'm having trouble accessing my data right now. Please try again shortly.";
+                    }
+                    
+                    // Add restart option
+                    errorMessage += "\n\n💡 You can also type 'hi' to restart our conversation anytime.";
+                    
                     await this.sendMessageOnce(
                         messageId,
                         from,
-                        "Sorry, I encountered an error processing your message. Please try again.",
+                        errorMessage,
                         'text'
                     );
                 }
@@ -280,9 +294,23 @@ class MessageHandler {
             });
 
             try {
+                // Provide more specific error messages and recovery options
+                let errorMessage = "Sorry, I encountered an error processing your message.";
+                
+                if (error.message && error.message.includes('Wit.ai')) {
+                    errorMessage = "I'm having trouble understanding your message right now.";
+                } else if (error.message && error.message.includes('database')) {
+                    errorMessage = "I'm having trouble accessing my data.";
+                } else if (error.message && error.message.includes('network')) {
+                    errorMessage = "There seems to be a connection issue.";
+                }
+                
+                // Add helpful recovery options
+                errorMessage += " Please try again or type 'hi' to restart our conversation.";
+                
                 await this.whatsappService.sendMessage(
                     from,
-                    "Sorry, I encountered an error processing your message. Please try again or type 'hi' to restart."
+                    errorMessage
                 );
             } catch (sendError) {
                 console.error('Error sending error message to user:', sendError);
@@ -1601,6 +1629,25 @@ What quantity would you like?`;
     async handleQuoteGeneration(messageText, from, conversationData) {
         console.log("conversationData111111111 ", conversationData);
         try {
+            // Validate required data before proceeding
+            const validationResult = this.validateQuoteData(conversationData);
+            if (!validationResult.isValid) {
+                console.log("Missing required data for quote generation:", validationResult.missingFields);
+                
+                // Send helpful message about what's missing
+                const missingMessage = `I need more information to generate your quote. Please provide:\n\n${validationResult.missingFields.join('\n')}\n\nLet's go back and collect this information.`;
+                
+                await this.whatsappService.sendMessage(from, missingMessage);
+                
+                // Reset to appropriate step based on what's missing
+                const resetStep = this.getResetStepForMissingData(validationResult.missingFields, conversationData);
+                await conversationService.updateConversationState(from, {
+                    currentStep: resetStep
+                });
+                
+                return;
+            }
+
             // Check if this is the first time in quote generation (acknowledge selections)
             if (!conversationData.quoteAcknowledged) {
                 // Format the acknowledgment message
@@ -1830,7 +1877,7 @@ Have a great day! 🌟`;
         }
     }
 
-    
+
     async sendPricingTable(from, conversationData, pricingData) {
         try {
             const { qty, unit_cost } = pricingData;
@@ -2296,6 +2343,83 @@ Would you like to:`;
             from,
             "Thank you for the document! 📄 We've received it and will review it shortly."
         );
+    }
+
+    /**
+     * Validate that all required data is present for quote generation
+     */
+    validateQuoteData(conversationData) {
+        const missingFields = [];
+        let isValid = true;
+
+        // Check for selected category
+        if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
+            missingFields.push("• Product category selection");
+            isValid = false;
+        }
+
+        // Check for selected product
+        if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
+            missingFields.push("• Product selection");
+            isValid = false;
+        }
+
+        // Check for selected material
+        if (!conversationData.selectedMaterial || !conversationData.selectedMaterial.name) {
+            missingFields.push("• Material selection");
+            isValid = false;
+        }
+
+        // Check for selected finishes
+        if (!conversationData.selectedFinish || conversationData.selectedFinish.length === 0) {
+            missingFields.push("• Finish selection");
+            isValid = false;
+        }
+
+        // Check for dimensions
+        if (!conversationData.dimensions || conversationData.dimensions.length === 0) {
+            missingFields.push("• Product dimensions");
+            isValid = false;
+        }
+
+        // Check for quantity
+        if (!conversationData.quantity || conversationData.quantity.length === 0) {
+            missingFields.push("• Quantity specification");
+            isValid = false;
+        }
+
+        return {
+            isValid,
+            missingFields
+        };
+    }
+
+    /**
+     * Determine which step to reset to based on missing data
+     */
+    getResetStepForMissingData(missingFields, conversationData) {
+        // Priority order: category -> product -> dimensions -> material -> finish -> quantity
+        if (missingFields.some(field => field.includes("category"))) {
+            return 'category_selection';
+        }
+        if (missingFields.some(field => field.includes("product"))) {
+            return 'product_selection';
+        }
+        if (missingFields.some(field => field.includes("dimensions"))) {
+            return 'dimension_input';
+        }
+        if (missingFields.some(field => field.includes("material"))) {
+            return 'material_selection';
+        }
+        if (missingFields.some(field => field.includes("finish"))) {
+            return 'finish_selection';
+        }
+        if (missingFields.some(field => field.includes("quantity"))) {
+            return 'quantity_input';
+        }
+
+        // Default fallback
+        return 'start';
     }
 
     async handleAudioMessage(message, from) {
