@@ -653,8 +653,9 @@ app.post('/clear-processed-messages', async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Processed messages cache cleared',
+            message: 'All message caches cleared successfully',
             clearedFromMemory: memoryCount,
+            clearedFromResponseTracker: responseTrackerCount,
             clearedFromDatabase: dbCount
         });
         

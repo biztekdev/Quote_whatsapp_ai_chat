@@ -101,8 +101,9 @@ class MessageHandler {
 
     async handleTextMessage(message, from) {
         await mongoLogger.info('Handling text message');
+        let messageText = 'unknown';
         try {
-            const messageText = message.text.body;
+            messageText = message.text.body;
             await mongoLogger.info('Text message content', { messageText });
 
             // Check if user wants to start a new quote

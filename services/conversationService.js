@@ -15,10 +15,16 @@ class ConversationService {
      */
     async getConversationState(phone) {
         try {
-            let state = await LegacyConversationState.findOne({ 
-                phone, 
-                isActive: true 
-            });
+            // Add timeout to prevent hanging
+            let state = await Promise.race([
+                LegacyConversationState.findOne({ 
+                    phone, 
+                    isActive: true 
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Database timeout')), 5000)
+                )
+            ]);
 
             
             console.log('state found', state);
@@ -37,6 +43,16 @@ class ConversationService {
             return state;
         } catch (error) {
             console.error('Error getting conversation state:', error);
+            // If database timeout, return a default state instead of throwing
+            if (error.message === 'Database timeout') {
+                console.log('Database timeout, returning default conversation state');
+                return {
+                    phone,
+                    currentStep: 'start',
+                    conversationData: {},
+                    isActive: true
+                };
+            }
             throw error;
         }
     }
