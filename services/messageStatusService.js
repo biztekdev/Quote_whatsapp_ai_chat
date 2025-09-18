@@ -1,6 +1,22 @@
 import { MessageStatus } from '../models/messageStatusModel.js';
 import mongoLogger from './mongoLogger.js';
 
+// In-memory processing locks to prevent race conditions
+const processingLocks = new Map();
+
+// Cleanup old locks every 5 minutes to prevent memory leaks
+setInterval(() => {
+    const now = Date.now();
+    const lockTimeout = 5 * 60 * 1000; // 5 minutes
+    
+    for (const [messageId, timestamp] of processingLocks.entries()) {
+        if (now - timestamp > lockTimeout) {
+            processingLocks.delete(messageId);
+            console.log(`🧹 Cleaned up stale processing lock for message ${messageId}`);
+        }
+    }
+}, 5 * 60 * 1000); // Run every 5 minutes
+
 class MessageStatusService {
     constructor() {
         // No caching - direct database operations only
@@ -179,33 +195,39 @@ class MessageStatusService {
      * This prevents race conditions in webhook processing
      */
     async atomicCheckAndInitialize(messageId, from, messageType, webhookData = null, conversationId = null) {
-        try {
-            // Use findOneAndUpdate with upsert to atomically check and initialize
-            const result = await MessageStatus.findOneAndUpdate(
-                { messageId: messageId },
-                {
-                    $setOnInsert: {
-                        messageId,
-                        from,
-                        messageType,
-                        webhookData,
-                        conversationId,
-                        processingStatus: 'pending',
-                        responseStatus: 'not_sent',
-                        receivedAt: new Date()
-                    }
-                },
-                { 
-                    upsert: true, 
-                    new: true,
-                    runValidators: true
-                }
-            );
+        // Check if this message is already being processed
+        if (processingLocks.has(messageId)) {
+            console.log(`🔒 Message ${messageId} is already being processed by another webhook, skipping`);
+            return { canProcess: false, status: null };
+        }
 
-            // Check if this was a new document (upserted) or existing
-            const isNew = result.isNew || !result.createdAt || result.createdAt === result.updatedAt;
+        // Set processing lock with timestamp
+        processingLocks.set(messageId, Date.now());
+        
+        try {
+            // First, try to find existing message
+            const existingStatus = await MessageStatus.findOne({ messageId: messageId });
             
-            if (isNew) {
+            if (existingStatus) {
+                // Message already exists, check if it can be processed
+                const canProcess = !existingStatus.hasBeenProcessed();
+                console.log(`🔍 Message ${messageId} already exists, can process: ${canProcess} (status: ${existingStatus.processingStatus})`);
+                return { canProcess, status: existingStatus };
+            }
+
+            // Message doesn't exist, try to create it atomically
+            try {
+                const newStatus = await MessageStatus.create({
+                    messageId,
+                    from,
+                    messageType,
+                    webhookData,
+                    conversationId,
+                    processingStatus: 'pending',
+                    responseStatus: 'not_sent',
+                    receivedAt: new Date()
+                });
+
                 console.log(`✅ Atomically initialized status tracking for message ${messageId}`);
                 await mongoLogger.info('Message status atomically initialized', {
                     messageId,
@@ -213,12 +235,25 @@ class MessageStatusService {
                     messageType,
                     conversationId
                 });
-                return { canProcess: true, status: result };
-            } else {
-                // Document already existed, check if it can be processed
-                const canProcess = !result.hasBeenProcessed();
-                console.log(`🔍 Message ${messageId} already exists, can process: ${canProcess} (status: ${result.processingStatus})`);
-                return { canProcess, status: result };
+                return { canProcess: true, status: newStatus };
+
+            } catch (createError) {
+                // If creation failed due to duplicate key, someone else created it
+                if (createError.code === 11000) {
+                    console.log(`🔄 Message ${messageId} was created by another process, checking status...`);
+                    
+                    // Wait a moment and check the status
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    const existingStatus = await MessageStatus.findOne({ messageId: messageId });
+                    
+                    if (existingStatus) {
+                        const canProcess = !existingStatus.hasBeenProcessed();
+                        console.log(`🔍 Message ${messageId} found after race condition, can process: ${canProcess} (status: ${existingStatus.processingStatus})`);
+                        return { canProcess, status: existingStatus };
+                    }
+                }
+                
+                throw createError;
             }
 
         } catch (error) {
@@ -231,6 +266,9 @@ class MessageStatusService {
                 error: error.message
             });
             return { canProcess: false, status: null };
+        } finally {
+            // Always release the lock
+            processingLocks.delete(messageId);
         }
     }
 

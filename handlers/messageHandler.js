@@ -17,6 +17,30 @@ class MessageHandler {
         this.wit = wit;
         this.witService = new WitService();
         // Remove old responseTracker - now using MessageStatusService
+        
+        // Create a wrapper for whatsappService.sendMessage to track all messages
+        this.originalSendMessage = this.whatsappService.sendMessage.bind(this.whatsappService);
+        this.whatsappService.sendMessage = this.trackedSendMessage.bind(this);
+    }
+
+    // Wrapper method to track all message sending attempts
+    async trackedSendMessage(to, message, type = 'text') {
+        console.log(`🚨 DIRECT MESSAGE SEND DETECTED: ${to} - ${message.substring(0, 50)}...`);
+        console.trace('Call stack for direct message send:');
+        
+        // Try to find messageId from the call stack or context
+        // This is a fallback for direct calls that bypass sendMessageOnce
+        const result = await this.originalSendMessage(to, message, type);
+        
+        // Log this as a potential duplicate
+        await mongoLogger.warn('Direct message send detected (bypassed sendMessageOnce)', {
+            to,
+            message: message.substring(0, 100),
+            type,
+            source: 'direct-whatsapp-service-call'
+        });
+        
+        return result;
     }
 
     // Check if we've already responded to a message using MessageStatusService
@@ -1144,7 +1168,7 @@ Would you like to get a quote for mylar bags today?`;
         // }
     }
 
-    async sendProductSelection(from) {
+    async sendProductSelection(from, messageId = null) {
         // try {
         // Get conversation state to access selected category
         const conversationState = await conversationService.getConversationState(from);
@@ -1205,7 +1229,11 @@ Would you like to get a quote for mylar bags today?`;
         
         bodyText += `\nWhat is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
 
-        await this.whatsappService.sendMessage(from, bodyText);
+        if (messageId) {
+            await this.sendMessageOnce(messageId, from, bodyText);
+        } else {
+            await this.sendMessageFallback(from, bodyText);
+        }
         // } catch (error) {
         //     await mongoLogger.logError(error, { source: 'send-product-selection' });
         //     await this.whatsappService.sendMessage(
