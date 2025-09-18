@@ -221,7 +221,6 @@ async function processMessagesAsync(webhookData, startTime) {
                         return;
                     }
                     
-
                     // Process each user message in the webhook
                     for (let i = 0; i < userMessages.length; i++) {
                         const message = userMessages[i];
