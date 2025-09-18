@@ -1374,8 +1374,86 @@ Would you like to get a quote for mylar bags today?`;
                 }
             }
 
-            // We have a product, ask for dimensions
+            // Try to extract dimensions from the message using Wit.ai
+            console.log("Attempting to extract dimensions from message:", messageText);
+            
+            try {
+                const witResponse = await this.witService.getMessage(messageText);
+                console.log("Wit.ai response for dimensions:", JSON.stringify(witResponse, null, 2));
+
+                if (witResponse.entities && witResponse.entities['dimensions:dimensions']) {
+                    console.log("Found dimensions in Wit.ai response, processing...");
+                    
+                    // Extract and update conversation data with dimensions
+                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData);
+                    
+                    if (updatedData.dimensions && updatedData.dimensions.length > 0) {
+                        console.log("Successfully extracted dimensions:", updatedData.dimensions);
+                        
+                        // Update conversation state with dimensions
+                        await conversationService.updateConversationState(from, {
+                            dimensions: updatedData.dimensions
+                        });
+
+                        // Move to next step
+                        const nextStep = this.getNextStepAfterBypass('dimension_input', updatedData);
+                        await conversationService.updateConversationState(from, {
+                            currentStep: nextStep
+                        });
+
+                        // Process the next step
+                        const updatedState = await conversationService.getConversationState(from);
+                        await this.processConversationFlow(message, messageText, from, updatedState, true);
+                        return;
+                    }
+                }
+            } catch (witError) {
+                console.log("Wit.ai extraction failed, trying manual parsing:", witError.message);
+            }
+
+            // If Wit.ai extraction failed, try manual parsing
             const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+            if (product && product.dimensionFields) {
+                const dimensionNames = product.dimensionFields.map(f => f.name);
+                const dimensionValues = this.parseDimensionValues(messageText);
+                
+                if (dimensionValues.length > 0) {
+                    console.log("Manually parsed dimensions:", dimensionValues);
+                    
+                    // Map dimension values to product dimension fields
+                    const dimensions = [];
+                    product.dimensionFields.forEach((field, index) => {
+                        if (dimensionValues[index] !== undefined) {
+                            dimensions.push({
+                                name: field.name,
+                                value: dimensionValues[index]
+                            });
+                        }
+                    });
+
+                    if (dimensions.length > 0) {
+                        console.log("Successfully parsed dimensions manually:", dimensions);
+                        
+                        // Update conversation state with dimensions
+                        await conversationService.updateConversationState(from, {
+                            dimensions: dimensions
+                        });
+
+                        // Move to next step
+                        const nextStep = this.getNextStepAfterBypass('dimension_input', { ...conversationData, dimensions });
+                        await conversationService.updateConversationState(from, {
+                            currentStep: nextStep
+                        });
+
+                        // Process the next step
+                        const updatedState = await conversationService.getConversationState(from);
+                        await this.processConversationFlow(message, messageText, from, updatedState, true);
+                        return;
+                    }
+                }
+            }
+
+            // If no dimensions were extracted, ask for them
 
             if (!product || !product.dimensionFields) {
                 await this.whatsappService.sendMessage(
