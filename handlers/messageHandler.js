@@ -79,6 +79,18 @@ class MessageHandler {
         }
     }
 
+    // Helper method for sending messages when we don't have a messageId (fallback)
+    async sendMessageFallback(to, message, type = 'text') {
+        try {
+            console.log(`📤 Sending fallback message to ${to}`);
+            const result = await this.whatsappService.sendMessage(to, message, type);
+            return result;
+        } catch (error) {
+            console.error(`❌ Error in sendMessageFallback:`, error);
+            throw error;
+        }
+    }
+
     async handleIncomingMessage(message, value = null) {
         const messageId = message.id;
         const from = message.from;
@@ -232,7 +244,7 @@ class MessageHandler {
                 await conversationService.resetConversation(from);
                 
                 // Send greeting response for new conversation
-                await this.handleGreetingResponse(messageText, from);
+                await this.handleGreetingResponse(messageText, from, message.id);
                 return;
             }
 
@@ -312,7 +324,8 @@ class MessageHandler {
             });
 
             try {
-                await this.whatsappService.sendMessage(
+                await this.sendMessageOnce(
+                    message.id,
                     from,
                     "Sorry, I encountered an error processing your message. Please try again or type 'hi' to restart."
                 );
@@ -865,7 +878,7 @@ class MessageHandler {
                             await this.handleStartStep(messageText, from, message.id);
                             break;
                         case 'greeting_response':
-                            await this.handleGreetingResponse(messageText, from);
+                            await this.handleGreetingResponse(messageText, from, message.id);
                             break;
                         case 'category_selection':
                             await this.handleCategorySelection(messageText, from);
@@ -920,7 +933,7 @@ class MessageHandler {
         } catch (error) {
             await mongoLogger.logError(error, { source: 'conversation-flow' });
             // Only send error message if we haven't already responded
-            if (!this.hasResponded(message.id)) {
+            if (!(await this.hasResponded(message.id))) {
                 await this.sendMessageOnce(
                     message.id,
                     from,
@@ -1007,7 +1020,7 @@ Would you like to get a quote for mylar bags today?`;
         await this.whatsappService.sendButtonMessage(from, bodyText, buttons);
     }
 
-    async handleGreetingResponse(messageText, from) {
+    async handleGreetingResponse(messageText, from, messageId = null) {
         const response = messageText.toLowerCase().trim();
         console.log('Message response ', response);
 
@@ -1018,7 +1031,8 @@ Would you like to get a quote for mylar bags today?`;
             });
             await this.sendCategorySelection(from);
         } else if (response.includes('no') || response === 'quote_no') {
-            await this.whatsappService.sendMessage(
+            await this.sendMessageOnce(
+                messageId,
                 from,
                 "No problem! If you change your mind or have any questions about our mylar bags, feel free to reach out anytime. Have a great day! 😊"
             );
@@ -1028,22 +1042,31 @@ Would you like to get a quote for mylar bags today?`;
                 completedAt: new Date()
             });
         } else {
-            await this.whatsappService.sendMessage(
+            await this.sendMessageOnce(
+                messageId,
                 from,
                 "Please reply with 'Yes' if you want a quote or 'No' if you don't need one right now."
             );
         }
     }
 
-    async sendCategorySelection(from) {
+    async sendCategorySelection(from, messageId = null) {
         try {
             const categories = await conversationService.getProductCategories();
 
             if (!categories || categories.length === 0) {
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, no product categories are available at the moment. Please try again later."
-                );
+                if (messageId) {
+                    await this.sendMessageOnce(
+                        messageId,
+                        from,
+                        "Sorry, no product categories are available at the moment. Please try again later."
+                    );
+                } else {
+                    await this.sendMessageFallback(
+                        from,
+                        "Sorry, no product categories are available at the moment. Please try again later."
+                    );
+                }
                 return;
             }
 
@@ -1303,7 +1326,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, true);
                 return;
             }
 
@@ -1552,7 +1575,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState);
+                await this.processConversationFlow(message, messageText, from, updatedState);
             } else {
                 await this.whatsappService.sendMessage(
                     from,
@@ -1611,7 +1634,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, true);
                 return;
             }
 
@@ -1670,7 +1693,7 @@ What quantity would you like?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, true);
                 return;
             }
 
@@ -2550,7 +2573,7 @@ Would you like to:`;
             await mongoLogger.info('List item selected', { listId, listTitle, from });
 
             // Process the list selection as a regular text message
-            await this.processConversationFlow(listId, from, await conversationService.getConversationState(from));
+            await this.processConversationFlow(message, listId, from, await conversationService.getConversationState(from));
         }
     }
 
