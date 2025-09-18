@@ -85,6 +85,18 @@ class MessageHandler {
         const messageType = message.type;
 
         try {
+            // Check for empty text messages early
+            if (messageType === 'text' && (!message.text?.body || message.text.body.trim() === '')) {
+                console.log(`⏭️ Empty text message received from ${from}, skipping processing`);
+                await mongoLogger.info('Empty text message received, skipping processing', { 
+                    messageType, 
+                    from, 
+                    messageId,
+                    messageText: message.text?.body || 'empty'
+                });
+                return;
+            }
+
             await mongoLogger.logMessage(message, from);
             await mongoLogger.info('Message received', { messageType, from, messageId });
 
@@ -188,6 +200,17 @@ class MessageHandler {
         let messageText = 'unknown';
         try {
             messageText = message.text.body;
+
+            // Check if message is empty, null, or undefined
+            if (!messageText || messageText.trim() === '') {
+                console.log(`⏭️ Empty message received from ${from}, skipping processing`);
+                await mongoLogger.info('Empty message received, skipping processing', { 
+                    from, 
+                    messageId: message.id,
+                    messageText: messageText || 'empty'
+                });
+                return;
+            }
 
             // Check if conversation is already completed
             let conversationState = await conversationService.getConversationState(from);
