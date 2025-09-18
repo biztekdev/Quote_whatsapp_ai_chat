@@ -182,6 +182,10 @@ app.get("/webhook", async (req, res) => {
     }
 });
 
+// Webhook processing cache to prevent duplicate processing
+const webhookProcessingCache = new Map();
+const WEBHOOK_CACHE_TTL = 60000; // 1 minute
+
 // Async function to process messages without blocking webhook response
 async function processMessagesAsync(webhookData, startTime) {
     const processingId = `proc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -197,6 +201,32 @@ async function processMessagesAsync(webhookData, startTime) {
 
                 const change = entry.changes[0];
                 if (change.value && change.value.messages && change.value.messages.length > 0) {
+
+                    // Create a webhook signature to detect duplicates
+                    const webhookSignature = JSON.stringify({
+                        entryId: entry.id,
+                        changeField: change.field,
+                        messageIds: change.value.messages.map(m => m.id).sort()
+                    });
+
+                    // Check if we've already processed this webhook recently
+                    if (webhookProcessingCache.has(webhookSignature)) {
+                        const lastProcessed = webhookProcessingCache.get(webhookSignature);
+                        if (Date.now() - lastProcessed < WEBHOOK_CACHE_TTL) {
+                            console.log(`⏭️ [${processingId}] Duplicate webhook detected, skipping processing`);
+                            return;
+                        }
+                    }
+
+                    // Store webhook signature
+                    webhookProcessingCache.set(webhookSignature, Date.now());
+
+                    // Clean up old cache entries
+                    for (const [key, timestamp] of webhookProcessingCache.entries()) {
+                        if (Date.now() - timestamp > WEBHOOK_CACHE_TTL) {
+                            webhookProcessingCache.delete(key);
+                        }
+                    }
 
                     // Filter out messages that are from us (our own sent messages)
                     const userMessages = change.value.messages.filter(message => {
@@ -306,54 +336,48 @@ app.post('/webhook', async (req, res) => {
     try {
         const responseDelay = Date.now() - startTime;
         
-        // try {
-        //     await webhookService.storeWebhookCall(req, res);
-        //     console.log(`📝 [${webhookId}] Webhook stored in service`);
-        // } catch (storeError) {
-        //     console.error(`❌ [${webhookId}] Failed to store webhook:`, storeError);
-        // }
-        
         const webhookData = req.body;
         
         // Log webhook data analysis
         const messageCount = webhookData?.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0;
         const hasMessages = messageCount > 0;
         const firstMessage = hasMessages ? webhookData.entry[0].changes[0].value.messages[0] : null;
-       console.log("firstMessage ", firstMessage);
-        // if (!hasMessages) {
-        //     console.log(`⚠️ No messages found, skipping`);
-        //     return res.status(200).json({
-        //         status: 'success',
-        //         message: 'No messages to process',
-        //         processingTime: `${responseDelay}ms`,
-        //         timestamp: new Date().toISOString(),
-        //         webhookId: webhookId
-        //     });
-        // }
+        console.log("firstMessage ", firstMessage);
+        
+        if (!hasMessages) {
+            console.log(`⚠️ No messages found, skipping`);
+            return res.status(200).json({
+                status: 'success',
+                message: 'No messages to process',
+                processingTime: `${responseDelay}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
+        }
         
         // Start async processing without blocking the response
-         processMessagesAsync(webhookData, startTime).catch(error => {
+        processMessagesAsync(webhookData, startTime).catch(error => {
             console.error(`❌ Async processing error:`, error.message);
         });
         
         // Return immediate response to WhatsApp
-        // return res.status(200).json({
-        //     status: 'success',
-        //     message: 'Webhook received and processing started',
-        //     messageCount: messageCount,
-        //     processingTime: `${responseDelay}ms`,
-        //     timestamp: new Date().toISOString(),
-        //     webhookId: webhookId
-        // });
+        return res.status(200).json({
+            status: 'success',
+            message: 'Webhook received and processing started',
+            messageCount: messageCount,
+            processingTime: `${responseDelay}ms`,
+            timestamp: new Date().toISOString(),
+            webhookId: webhookId
+        });
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
         
         if (!res.headersSent) {
-        res.status(200).json({
-            status: 'error',
-            error: error.message,
-            processingTime: `${processingTime}ms`,
+            return res.status(200).json({
+                status: 'error',
+                error: error.message,
+                processingTime: `${processingTime}ms`,
                 timestamp: new Date().toISOString(),
                 webhookId: webhookId
             });
@@ -931,6 +955,54 @@ app.post('/test-message-processing', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Message handler test failed',
+            details: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+// Test endpoint to verify duplicate message prevention
+app.post('/test-duplicate-prevention', async (req, res) => {
+    try {
+        const testMessage = {
+            id: 'duplicate_test_' + Date.now(),
+            from: '923260533337',
+            type: 'text',
+            text: {
+                body: 'Test duplicate prevention'
+            }
+        };
+
+        console.log('🧪 Testing duplicate message prevention with:', testMessage);
+
+        // Process the same message twice
+        const result1 = await messageHandler.handleIncomingMessage(testMessage);
+        const result2 = await messageHandler.handleIncomingMessage(testMessage);
+
+        // Check message status
+        const messageStatus = await messageStatusService.getMessageStatus(testMessage.id);
+        const hasResponded = await messageStatusService.hasResponseBeenSent(testMessage.id);
+
+        res.json({
+            success: true,
+            message: 'Duplicate prevention test completed',
+            testMessage,
+            firstProcessing: result1,
+            secondProcessing: result2,
+            messageStatus: {
+                processingStatus: messageStatus?.processingStatus,
+                responseStatus: messageStatus?.responseStatus,
+                retryCount: messageStatus?.retryCount
+            },
+            hasResponded,
+            duplicatePrevented: result2 === undefined || result2 === null
+        });
+
+    } catch (error) {
+        console.error('❌ Duplicate prevention test failed:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Duplicate prevention test failed',
             details: error.message,
             stack: error.stack
         });

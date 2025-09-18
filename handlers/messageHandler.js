@@ -95,15 +95,7 @@ class MessageHandler {
                 return;
             }
 
-            // Initialize message status tracking
-            await messageStatusService.initializeMessageStatus(
-                messageId,
-                from,
-                messageType,
-                message, // webhookData
-                null // conversationId - can be set later if needed
-            );
-
+            // Note: Message status is already initialized in processMessagesAsync
             // Check if message can be processed
             const canProcess = await messageStatusService.canProcessMessage(messageId);
             if (!canProcess) {
@@ -112,8 +104,7 @@ class MessageHandler {
                 return;
             }
 
-            // Mark message as processing
-            await messageStatusService.markAsProcessing(messageId);
+            // Note: Message is already marked as processing in processMessagesAsync
 
             // Mark message as read
             // await this.whatsappService.markAsRead(messageId);

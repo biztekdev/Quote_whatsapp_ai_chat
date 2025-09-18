@@ -80,6 +80,18 @@ class MessageStatusService {
                 throw new Error(`Message status not found for ${messageId}`);
             }
 
+            // Check if message is already being processed for too long (5 minutes timeout)
+            if (status.processingStatus === 'processing' && status.processedAt) {
+                const processingTime = Date.now() - status.processedAt.getTime();
+                if (processingTime > 5 * 60 * 1000) { // 5 minutes
+                    console.log(`⚠️ Message ${messageId} has been processing for ${Math.round(processingTime / 1000)}s, resetting status`);
+                    status.processingStatus = 'pending';
+                    status.processedAt = undefined;
+                    status.retryCount = (status.retryCount || 0) + 1;
+                    await status.save();
+                }
+            }
+
             await status.markAsProcessing();
 
             // Update memory cache
@@ -180,7 +192,8 @@ class MessageStatusService {
                 return true; // New message, can process
             }
 
-            const canProcess = !status.hasBeenProcessed();
+            // Check if message is already being processed or completed
+            const canProcess = !status.hasBeenProcessed() && status.processingStatus !== 'processing';
             console.log(`🔍 Message ${messageId} can be processed: ${canProcess} (status: ${status.processingStatus})`);
 
             return canProcess;
