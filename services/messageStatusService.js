@@ -3,8 +3,7 @@ import mongoLogger from './mongoLogger.js';
 
 class MessageStatusService {
     constructor() {
-        this.memoryCache = new Map(); // For fast lookups
-        this.maxCacheSize = 10000; // Maximum entries in memory cache
+        // No caching - direct database operations only
     }
 
     /**
@@ -12,19 +11,11 @@ class MessageStatusService {
      */
     async initializeMessageStatus(messageId, from, messageType, webhookData = null, conversationId = null) {
         try {
-            // Check memory cache first
-            if (this.memoryCache.has(messageId)) {
-                console.log(`📋 Message ${messageId} already in memory cache`);
-                return this.memoryCache.get(messageId);
-            }
-
-            // Check database
+            // Check database directly
             let existingStatus = await MessageStatus.findByMessageId(messageId);
 
             if (existingStatus) {
                 console.log(`📋 Message ${messageId} already exists in database`);
-                // Update memory cache
-                this.memoryCache.set(messageId, existingStatus);
                 return existingStatus;
             }
 
@@ -40,12 +31,6 @@ class MessageStatusService {
             });
 
             await newStatus.save();
-
-            // Add to memory cache
-            this.memoryCache.set(messageId, newStatus);
-
-            // Clean up memory cache if it's getting too large
-            this.cleanupMemoryCache();
 
             console.log(`✅ Initialized status tracking for message ${messageId}`);
             await mongoLogger.info('Message status initialized', {
@@ -80,22 +65,7 @@ class MessageStatusService {
                 throw new Error(`Message status not found for ${messageId}`);
             }
 
-            // Check if message is already being processed for too long (5 minutes timeout)
-            if (status.processingStatus === 'processing' && status.processedAt) {
-                const processingTime = Date.now() - status.processedAt.getTime();
-                if (processingTime > 5 * 60 * 1000) { // 5 minutes
-                    console.log(`⚠️ Message ${messageId} has been processing for ${Math.round(processingTime / 1000)}s, resetting status`);
-                    status.processingStatus = 'pending';
-                    status.processedAt = undefined;
-                    status.retryCount = (status.retryCount || 0) + 1;
-                    await status.save();
-                }
-            }
-
             await status.markAsProcessing();
-
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`🔄 Marked message ${messageId} as processing`);
             await mongoLogger.info('Message marked as processing', { messageId });
@@ -126,9 +96,6 @@ class MessageStatusService {
 
             await status.markAsProcessed();
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
-
             console.log(`✅ Marked message ${messageId} as processed`);
             await mongoLogger.info('Message marked as processed', { messageId });
 
@@ -158,8 +125,6 @@ class MessageStatusService {
 
             await status.markAsFailed(error);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`❌ Marked message ${messageId} as failed: ${error}`);
             await mongoLogger.error('Message processing failed', {
@@ -192,8 +157,7 @@ class MessageStatusService {
                 return true; // New message, can process
             }
 
-            // Check if message is already being processed or completed
-            const canProcess = !status.hasBeenProcessed() && status.processingStatus !== 'processing';
+            const canProcess = !status.hasBeenProcessed();
             console.log(`🔍 Message ${messageId} can be processed: ${canProcess} (status: ${status.processingStatus})`);
 
             return canProcess;
@@ -222,8 +186,6 @@ class MessageStatusService {
 
             await status.markResponseAsSending();
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`📤 Marked response for message ${messageId} as sending`);
             await mongoLogger.info('Response marked as sending', { messageId });
@@ -254,8 +216,6 @@ class MessageStatusService {
 
             await status.markResponseAsSent(responseMessageId, responseType);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`✅ Marked response for message ${messageId} as sent`);
             await mongoLogger.info('Response marked as sent', {
@@ -290,8 +250,6 @@ class MessageStatusService {
 
             await status.markResponseAsFailed(error);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`❌ Marked response for message ${messageId} as failed: ${error}`);
             await mongoLogger.error('Response marked as failed', {
@@ -370,23 +328,12 @@ class MessageStatusService {
     }
 
     /**
-     * Get message status (from cache or database)
+     * Get message status from database
      */
     async getMessageStatus(messageId) {
         try {
-            // Check memory cache first
-            if (this.memoryCache.has(messageId)) {
-                return this.memoryCache.get(messageId);
-            }
-
-            // Check database
+            // Check database directly
             const status = await MessageStatus.findByMessageId(messageId);
-
-            if (status) {
-                // Update memory cache
-                this.memoryCache.set(messageId, status);
-            }
-
             return status;
 
         } catch (error) {
@@ -458,22 +405,6 @@ class MessageStatusService {
         }
     }
 
-    /**
-     * Clean up memory cache to prevent memory leaks
-     */
-    cleanupMemoryCache() {
-        if (this.memoryCache.size > this.maxCacheSize) {
-            // Remove oldest entries (simple FIFO)
-            const entries = Array.from(this.memoryCache.entries());
-            const toRemove = entries.slice(0, this.memoryCache.size - this.maxCacheSize + 100);
-
-            toRemove.forEach(([key]) => {
-                this.memoryCache.delete(key);
-            });
-
-            console.log(`🧹 Cleaned up ${toRemove.length} entries from memory cache`);
-        }
-    }
 
     /**
      * Get statistics about message processing
@@ -512,8 +443,6 @@ class MessageStatusService {
                 responseFailed: 0
             };
 
-            result.memoryCacheSize = this.memoryCache.size;
-
             return result;
 
         } catch (error) {
@@ -529,7 +458,6 @@ class MessageStatusService {
                 responded: 0,
                 failed: 0,
                 responseFailed: 0,
-                memoryCacheSize: this.memoryCache.size
             };
         }
     }
@@ -554,8 +482,6 @@ class MessageStatusService {
 
             await status.save();
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`🔄 Reset status for message ${messageId}`);
             await mongoLogger.info('Message status reset', { messageId });
