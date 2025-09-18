@@ -911,7 +911,7 @@ class MessageHandler {
                             await this.handleProductSelection(messageText, from);
                             break;
                         case 'dimension_input':
-                            await this.handleDimensionInput(messageText, from, conversationData);
+                            await this.handleDimensionInput(messageText, from, conversationData, message);
                             break;
                         case 'material_selection':
                             await this.handleMaterialSelection(messageText, from, conversationData);
@@ -1339,7 +1339,7 @@ Would you like to get a quote for mylar bags today?`;
         await this.whatsappService.sendMessage(from, message);
     }
 
-    async handleDimensionInput(messageText, from, conversationData) {
+    async handleDimensionInput(messageText, from, conversationData, message = null) {
         try {
             // Check if dimensions already exist
             if (conversationData.dimensions && conversationData.dimensions.length > 0) {
@@ -1354,7 +1354,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState, true);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
@@ -1378,7 +1378,7 @@ Would you like to get a quote for mylar bags today?`;
             console.log("Attempting to extract dimensions from message:", messageText);
             
             try {
-                const witResponse = await this.witService.getMessage(messageText);
+                const witResponse = await this.witService.processMessage(messageText);
                 console.log("Wit.ai response for dimensions:", JSON.stringify(witResponse, null, 2));
 
                 if (witResponse.entities && witResponse.entities['dimensions:dimensions']) {
@@ -1681,7 +1681,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState);
+                await this.processConversationFlow(messageText, from, updatedState);
             } else {
                 await this.whatsappService.sendMessage(
                     from,
@@ -1740,7 +1740,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState, true);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
@@ -1799,7 +1799,7 @@ What quantity would you like?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState, true);
+                await this.processConversationFlow(messageText, from, updatedState, true);
                 return;
             }
 
