@@ -220,6 +220,7 @@ async function processMessagesAsync(webhookData, startTime) {
                         console.log(`⚠️ [${processingId}] No user messages found in webhook data - all messages filtered out`);
                         return;
                     }
+                    
 
                     // Process each user message in the webhook
                     for (let i = 0; i < userMessages.length; i++) {
