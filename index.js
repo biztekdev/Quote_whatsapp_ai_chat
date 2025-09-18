@@ -247,8 +247,13 @@ async function processMessagesAsync(webhookData, startTime) {
                             continue; // Skip this message
                         }
 
-                        // Mark message as processing
-                        await messageStatusService.markAsProcessing(messageId);
+                        // Mark message as processing (atomic operation)
+                        const processingStatus = await messageStatusService.markAsProcessing(messageId);
+                        
+                        if (!processingStatus) {
+                            console.log(`⏭️ [${messageProcessingId}] Message is already being processed by another instance, skipping`);
+                            continue; // Skip this message
+                        }
 
                         // Process the message
                         console.log(`🚀 [${messageProcessingId}] About to call messageHandler.handleIncomingMessage`);
