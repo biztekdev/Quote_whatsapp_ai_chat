@@ -233,8 +233,8 @@ async function processMessagesAsync(webhookData, startTime) {
 
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
 
-                        // Initialize message status tracking
-                        await messageStatusService.initializeMessageStatus(
+                        // Atomically check if message can be processed and initialize if it can
+                        const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
                             messageId,
                             from,
                             messageType,
@@ -242,8 +242,6 @@ async function processMessagesAsync(webhookData, startTime) {
                             null // conversationId
                         );
 
-                        // Check if message can be processed
-                        const canProcess = await messageStatusService.canProcessMessage(messageId);
                         if (!canProcess) {
                             console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
                             continue; // Skip this message

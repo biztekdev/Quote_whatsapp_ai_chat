@@ -175,6 +175,66 @@ class MessageStatusService {
     }
 
     /**
+     * Atomically check if message can be processed and initialize if it can
+     * This prevents race conditions in webhook processing
+     */
+    async atomicCheckAndInitialize(messageId, from, messageType, webhookData = null, conversationId = null) {
+        try {
+            // Use findOneAndUpdate with upsert to atomically check and initialize
+            const result = await MessageStatus.findOneAndUpdate(
+                { messageId: messageId },
+                {
+                    $setOnInsert: {
+                        messageId,
+                        from,
+                        messageType,
+                        webhookData,
+                        conversationId,
+                        processingStatus: 'pending',
+                        responseStatus: 'not_sent',
+                        receivedAt: new Date()
+                    }
+                },
+                { 
+                    upsert: true, 
+                    new: true,
+                    runValidators: true
+                }
+            );
+
+            // Check if this was a new document (upserted) or existing
+            const isNew = result.isNew || !result.createdAt || result.createdAt === result.updatedAt;
+            
+            if (isNew) {
+                console.log(`✅ Atomically initialized status tracking for message ${messageId}`);
+                await mongoLogger.info('Message status atomically initialized', {
+                    messageId,
+                    from,
+                    messageType,
+                    conversationId
+                });
+                return { canProcess: true, status: result };
+            } else {
+                // Document already existed, check if it can be processed
+                const canProcess = !result.hasBeenProcessed();
+                console.log(`🔍 Message ${messageId} already exists, can process: ${canProcess} (status: ${result.processingStatus})`);
+                return { canProcess, status: result };
+            }
+
+        } catch (error) {
+            console.error(`❌ Error in atomic check and initialize for ${messageId}:`, error);
+            await mongoLogger.logError(error, {
+                source: 'message-status-service',
+                operation: 'atomic-check-initialize',
+                messageId,
+                from,
+                error: error.message
+            });
+            return { canProcess: false, status: null };
+        }
+    }
+
+    /**
      * Mark response as being sent
      */
     async markResponseAsSending(messageId) {
