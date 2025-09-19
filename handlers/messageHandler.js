@@ -329,10 +329,10 @@ class MessageHandler {
             let updatedConversationData = conversationState.conversationData || {};
             if (conversationState.currentStep !== 'greeting_response' && conversationState.currentStep !== 'quote_generation') {
                 updatedConversationData = await this.extractAndUpdateConversationData(
-                    witResponse.data.entities,
+                witResponse.data.entities,
                     conversationState.conversationData || {},
                     messageText
-                );
+            );
             } else {
                 console.log("🎯 Skipping entity extraction for response step:", conversationState.currentStep, "message:", messageText);
             }
@@ -345,11 +345,18 @@ class MessageHandler {
             }
 
             // Check if we can bypass steps based on extracted data
+            console.log('🔍 determineNextStep input:', {
+                currentStep: conversationState.currentStep,
+                wantsQuote: updatedConversationData.wantsQuote,
+                hasSelectedCategory: !!updatedConversationData.selectedCategory?.id,
+                selectedCategory: updatedConversationData.selectedCategory
+            });
             const nextStep = await this.determineNextStep(
                 conversationState.currentStep,
                 updatedConversationData,
                 witResponse.data.entities
             );
+            console.log('🎯 determineNextStep result:', nextStep);
             // Update conversation state with extracted data
             if (Object.keys(updatedConversationData).length > 0) {
                 // console.log("💾 Updating conversation state with data:", {
@@ -965,16 +972,33 @@ class MessageHandler {
      * Determine the next step based on current step and extracted data
      */
     async determineNextStep(currentStep, conversationData, entities) {
+        console.log('🔍 determineNextStep called with:', {
+            currentStep,
+            wantsQuote: conversationData.wantsQuote,
+            hasSelectedCategory: !!conversationData.selectedCategory?.id,
+            selectedCategory: conversationData.selectedCategory
+        });
+
         // Special case: If we're in 'start' step and have selectedCategory, go to product_selection
-        if (currentStep === 'start' && conversationData.selectedCategory) {
+        if (currentStep === 'start' && conversationData.selectedCategory?.id) {
+            console.log('✅ Case 1: start + has selectedCategory → product_selection');
             return 'product_selection';
+        }
+
+        // Special case: If we're in 'start' step and user wants quote but no category selected, go to greeting_response
+        if (currentStep === 'start' && conversationData.wantsQuote && !conversationData.selectedCategory?.id) {
+            console.log('✅ Case 2: start + wantsQuote + no category → greeting_response');
+            return 'greeting_response';
         }
 
         // Use the bypassing logic to determine next step
         if (this.shouldBypassStep(currentStep, conversationData)) {
-            return this.getNextStepAfterBypass(currentStep, conversationData);
+            const bypassResult = this.getNextStepAfterBypass(currentStep, conversationData);
+            console.log('✅ Case 3: bypass logic →', bypassResult);
+            return bypassResult;
         }
 
+        console.log('✅ Case 4: no change →', currentStep);
         return currentStep; // Keep current step if no advancement possible
     }
 
@@ -1163,13 +1187,15 @@ Would you like to get a quote for mylar bags today?`;
 
     async handleGreetingResponse(messageText, from, messageId = null) {
         const response = messageText.toLowerCase().trim();
-        console.log('Message response ', response);
+        console.log('🎯 handleGreetingResponse called with:', { messageText, response, from });
 
         if (response.includes('yes') || response === 'quote_yes' || response.includes('get quote')) {
+            console.log('✅ User wants quote, updating state to category_selection');
             await conversationService.updateConversationState(from, {
                 currentStep: 'category_selection',
                 'conversationData.wantsQuote': true
             });
+            console.log('📤 Calling sendCategorySelection');
             await this.sendCategorySelection(from);
         } else if (response.includes('no') || response === 'quote_no') {
             await this.sendMessageOnce(
@@ -1192,8 +1218,10 @@ Would you like to get a quote for mylar bags today?`;
     }
 
     async sendCategorySelection(from, messageId = null) {
+        console.log('🎯 sendCategorySelection called for:', from);
         try {
             const categories = await conversationService.getProductCategories();
+            console.log('📋 Retrieved categories:', categories?.length || 0);
 
             if (!categories || categories.length === 0) {
                 if (messageId) {
@@ -1332,7 +1360,7 @@ Would you like to get a quote for mylar bags today?`;
                 }
 
                 console.log('�📤 Sending product selection for category:', selectedCategory.name);
-                await this.sendProductSelection(from);
+            await this.sendProductSelection(from);
             } catch (updateError) {
                 console.error('❌ Error updating conversation state with category:', updateError);
                 await mongoLogger.logError(updateError, {
@@ -1358,9 +1386,10 @@ Would you like to get a quote for mylar bags today?`;
     }
 
     async sendProductSelection(from, messageId = null) {
+        console.log('🚨 sendProductSelection called for:', from, '- This should not be called during greeting response!');
         try {
-            // Get conversation state to access selected category
-            const conversationState = await conversationService.getConversationState(from);
+        // Get conversation state to access selected category
+        const conversationState = await conversationService.getConversationState(from);
             console.log('📋 sendProductSelection - Current conversation state:', {
                 from: from,
                 currentStep: conversationState?.currentStep,
@@ -1371,10 +1400,10 @@ Would you like to get a quote for mylar bags today?`;
                 fullConversationData: JSON.stringify(conversationState?.conversationData, null, 2)
             });
 
-            const selectedCategory = conversationState.conversationData?.selectedCategory;
-            console.log('Selected category ', selectedCategory);
+        const selectedCategory = conversationState.conversationData?.selectedCategory;
+        console.log('Selected category ', selectedCategory);
 
-            if (!selectedCategory || !selectedCategory.id) {
+        if (!selectedCategory || !selectedCategory.id) {
                 console.error('❌ CRITICAL: No selected category found in sendProductSelection!');
                 await mongoLogger.logError(new Error('No selected category in sendProductSelection'), {
                     source: 'send-product-selection',
@@ -1382,12 +1411,12 @@ Would you like to get a quote for mylar bags today?`;
                     conversationState: conversationState
                 });
                 
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
-                );
-                return;
-            }
+            await this.whatsappService.sendMessage(
+                from,
+                "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+            );
+            return;
+        }
 
         // Get products by category ID to validate against
         const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
@@ -1453,9 +1482,9 @@ Would you like to get a quote for mylar bags today?`;
             "Sorry, I encountered an error while preparing the product selection. Please try again."
         );
     }
-}
+    }
 
-async handleProductSelection(messageText, from) {
+    async handleProductSelection(messageText, from) {
         try {
             // Get conversation state to access selected category
             const conversationState = await conversationService.getConversationState(from);
@@ -3038,7 +3067,7 @@ Would you like to:`;
             } else {
                 console.log('➡️ Processing with current step:', conversationState.currentStep);
                 // Process normally with current step
-                await this.processConversationFlow(message, listId, from, conversationState);
+            await this.processConversationFlow(message, listId, from, conversationState);
             }
         }
     }
