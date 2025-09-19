@@ -325,11 +325,17 @@ class MessageHandler {
             }
 
             // Extract and update conversation data with entities
-            const updatedConversationData = await this.extractAndUpdateConversationData(
-                witResponse.data.entities,
-                conversationState.conversationData || {},
-                messageText
-            );
+            // Skip entity extraction if we're in greeting_response or quote_generation step to prevent "Yes"/"No" from being processed as dimensions
+            let updatedConversationData = conversationState.conversationData || {};
+            if (conversationState.currentStep !== 'greeting_response' && conversationState.currentStep !== 'quote_generation') {
+                updatedConversationData = await this.extractAndUpdateConversationData(
+                    witResponse.data.entities,
+                    conversationState.conversationData || {},
+                    messageText
+                );
+            } else {
+                console.log("🎯 Skipping entity extraction for response step:", conversationState.currentStep, "message:", messageText);
+            }
 
 
             // Special case: If this is the first message and we have selectedCategory, bypass greeting
