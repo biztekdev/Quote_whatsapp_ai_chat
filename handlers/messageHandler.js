@@ -294,7 +294,7 @@ class MessageHandler {
             let witEntities = {};
             
             try {
-                console.log("🤖 Processing message with Wit.ai:", messageText);
+                // console.log("🤖 Processing message with Wit.ai:", messageText);
                 witResponse = await this.witService.processMessage(messageText);
                 
                 // Log the complete Wit.ai response
@@ -330,7 +330,7 @@ class MessageHandler {
 
             // Special case: If this is the first message and we have selectedCategory, bypass greeting
             if (conversationState.currentStep === 'start' && updatedConversationData.selectedCategory) {
-                console.log("Bypassing greeting - user provided product info in first message");
+                // console.log("Bypassing greeting - user provided product info in first message");
                 updatedConversationData.wantsQuote = true;
             }
 
@@ -342,12 +342,26 @@ class MessageHandler {
             );
             // Update conversation state with extracted data
             if (Object.keys(updatedConversationData).length > 0) {
+                // console.log("💾 Updating conversation state with data:", {
+                //     hasSkus: !!updatedConversationData.skus,
+                //     skusData: updatedConversationData.skus,
+                //     dataKeys: Object.keys(updatedConversationData)
+                // });
+                
                 const _sss = await conversationService.updateConversationState(from, {
                     conversationData: updatedConversationData,
                     currentStep: nextStep
                 });
+                
+                // console.log("✅ Conversation state updated successfully");
+                
                 // Get the updated conversation state for processing
                 conversationState = await conversationService.getConversationState(from);
+                // console.log("🔄 Retrieved updated conversation state:", {
+                //     hasSkus: !!conversationState.conversationData?.skus,
+                //     skusData: conversationState.conversationData?.skus,
+                //     currentStep: conversationState.currentStep
+                // });
             }
             // Process message through our conversation flow
             
@@ -424,7 +438,9 @@ class MessageHandler {
                 "dimensions:dimensions",
                 "material:material",
                 "finishes:finishes",
-                "quantities:quantities"
+                "quantities:quantities",
+                "skus:skus",
+                "sku:sku"
             ];
 
             // Sort entities based on custom order
@@ -450,17 +466,17 @@ class MessageHandler {
 
             // Process each entity type in sorted order
             for (const [entityType, entityArray] of sortedEntityEntries) {
-                // console.log(`🔍 Processing entity type: ${entityType}`, JSON.stringify(entityArray, null, 2));
+                console.log(`🔍 Processing entity type: ${entityType}`, JSON.stringify(entityArray, null, 2));
 
                 for (const entity of entityArray) {
                     try {
                         const { value, confidence, body } = entity;
-                        // console.log(`📝 Entity Details - Type: ${entityType}`, { 
-                        //     value, 
-                        //     confidence, 
-                        //     body,
-                        //     fullEntity: JSON.stringify(entity, null, 2)
-                        // });
+                        console.log(`📝 Entity Details - Type: ${entityType}`, { 
+                            value, 
+                            confidence, 
+                            body,
+                            fullEntity: JSON.stringify(entity, null, 2)
+                        });
 
                         if (confidence > 0.5) {
                             switch (entityType) {
@@ -560,7 +576,7 @@ class MessageHandler {
                                             updatedData.selectedFinish = [];
                                         }
                                         // Check if finish already exists to avoid duplicates
-                                        const finishExists = updatedData.selectedFinish.some(f => f._id === findFinish._id.toString());
+                                        const finishExists = updatedData.selectedFinish.some(f => f._id === findFinish.erp_id.toString());
                                         if (!finishExists) {
                                             // Push only _id and name
                                             updatedData.selectedFinish.push({
@@ -597,7 +613,47 @@ class MessageHandler {
                                         updatedData.quantity.push(quantityNum);
                                     }
                                     break;
-                            }
+                                case 'skus:skus':
+                                case 'sku:sku':
+                                    console.log("🎯 Processing SKU entity:", { value, body, confidence });
+                                    const skuValue = value || body;
+                                    console.log("📦 SKU value extracted:", skuValue);
+                                    
+                                    // Store SKU as single value, not array
+                                    const cleanSku = skuValue.toString().replace(/,/g, '');
+                                    const skuNum = parseInt(cleanSku);
+                                    
+                                    console.log("🔢 SKU number conversion:", { cleanSku, skuNum, isNaN: isNaN(skuNum) });
+                                    
+                                    if (!isNaN(skuNum)) {
+                                        updatedData.skus = skuNum;
+                                        console.log("✅ Stored numeric SKU:", skuNum);
+                                    } else {
+                                        updatedData.skus = skuValue;
+                                        console.log("✅ Stored string SKU:", skuValue);
+                                    }
+                                    
+                                    console.log("📊 Current skus value:", updatedData.skus);
+                                    break;
+                                default:
+                                    // Check if this is a SKU-related entity that we missed
+                                    if (entityType.includes('sku') || entityType.includes('SKU')) {
+                                        console.log("🎯 Processing potential SKU entity (fallback):", { entityType, value, body, confidence });
+                                        const skuValue = value || body;
+                                        
+                                        const cleanSku = skuValue.toString().replace(/,/g, '');
+                                        const skuNum = parseInt(cleanSku);
+                                        
+                                        if (!isNaN(skuNum)) {
+                                            updatedData.skus = skuNum;
+                                            console.log("✅ Stored SKU via fallback:", skuNum);
+                                        } else {
+                                            updatedData.skus = skuValue;
+                                            console.log("✅ Stored SKU string via fallback:", skuValue);
+                                        }
+                                    }
+                                    break;
+                        }
                         }
                     } catch (entityError) {
                         console.error(`Error processing entity ${entityType}:`, entityError);
@@ -612,6 +668,11 @@ class MessageHandler {
             }
 
             console.log("✅ Final Updated Conversation Data:", JSON.stringify(updatedData, null, 2));
+            console.log("🔍 Checking for SKUs in final data:", {
+                hasSkus: !!updatedData.skus,
+                skusValue: updatedData.skus,
+                skusType: typeof updatedData.skus
+            });
             return updatedData;
         } catch (error) {
             console.error('Error in extractAndUpdateConversationData:', error);
@@ -2356,7 +2417,7 @@ Have a great day! 🌟`;
                 ['Query No:', `QT-${Date.now()}`],
                 ['Customer:', 'WhatsApp Customer'],
                 ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
-                ['No of Sku\'s:', '1'],
+                ['No of Sku\'s:', conversationData.skus?.toString() || '1'],
                 ['Turnaround Time:', '12 - 15 Business Days (*T&C Applies)'],
                 ['Shipping:', 'DAP (Delivered At Place)'],
                 ['Stock:', conversationData.selectedMaterial?.name || 'Standard Material'],

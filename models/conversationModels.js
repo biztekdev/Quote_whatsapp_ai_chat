@@ -42,6 +42,7 @@ const conversationStateSchema = new mongoose.Schema({
             name: String
         }],
         quantity: [Number],
+        skus: mongoose.Schema.Types.Mixed, // Single SKU value (number or string)
         quoteAcknowledged: Boolean,
         completed: Boolean,
         pricing_done: Boolean,
