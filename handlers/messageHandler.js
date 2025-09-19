@@ -737,7 +737,16 @@ class MessageHandler {
             // Convert ObjectId to string if needed
             const categoryIdString = categoryId.toString();
             console.log("categoryIdString ", categoryIdString);
-            const category = await ProductCategory.findById(categoryIdString);
+
+            // First try to find by MongoDB ObjectId
+            let category = await ProductCategory.findById(categoryIdString);
+
+            // If not found and it's a number, try finding by ERP ID
+            if (!category && !isNaN(parseInt(categoryIdString))) {
+                category = await ProductCategory.findOne({ erp_id: parseInt(categoryIdString) });
+                console.log("Found category by ERP ID:", category?.name);
+            }
+
             return category;
         } catch (error) {
             console.error('Error finding category by ID:', error);
@@ -1213,8 +1222,10 @@ Would you like to get a quote for mylar bags today?`;
     }
 
     async handleCategorySelection(messageText, from) {
-        // try {
+        console.log('🎯 handleCategorySelection called with:', { messageText, from });
+
         const categories = await conversationService.getProductCategories();
+        console.log('📋 Available categories:', categories?.map(c => ({ name: c.name, erp_id: c.erp_id })) || 'No categories found');
 
         if (!categories || categories.length === 0) {
             await this.whatsappService.sendMessage(
@@ -1231,9 +1242,18 @@ Would you like to get a quote for mylar bags today?`;
             c.erp_id.toString() === messageText ||
             c.name.toLowerCase().includes(messageText.toLowerCase())
         );
-        console.log('Selected category ', selectedCategory);
+
+        console.log('🔍 Category search result:', {
+            searchTerm: messageText,
+            foundCategory: selectedCategory ? { name: selectedCategory.name, erp_id: selectedCategory.erp_id } : null,
+            searchByERP: categories.some(c => c.erp_id.toString() === messageText),
+            searchByName: categories.some(c => c.name.toLowerCase().includes(messageText.toLowerCase())),
+            allCategoryERPIds: categories.map(c => c.erp_id.toString()),
+            exactMatch: categories.find(c => c.erp_id.toString() === messageText)
+        });
 
         if (selectedCategory) {
+            console.log('✅ Updating conversation state with selected category');
             await conversationService.updateConversationState(from, {
                 currentStep: 'product_selection',
                 'conversationData.selectedCategory': {
@@ -1244,20 +1264,15 @@ Would you like to get a quote for mylar bags today?`;
                 }
             });
 
+            console.log('📤 Sending product selection for category:', selectedCategory.name);
             await this.sendProductSelection(from);
         } else {
+            console.log('❌ No category found for:', messageText);
             await this.whatsappService.sendMessage(
                 from,
                 "I didn't quite catch that. Please select a category from the list above or type the category name."
             );
         }
-        // } catch (error) {
-        //     await mongoLogger.logError(error, { source: 'handle-category-selection' });
-        //     await this.whatsappService.sendMessage(
-        //         from,
-        //         "Sorry, I encountered an error processing your category selection. Please try again."
-        //     );
-        // }
     }
 
     async sendProductSelection(from, messageId = null) {
@@ -2868,8 +2883,26 @@ Would you like to:`;
             const listTitle = message.interactive.list_reply.title;
             await mongoLogger.info('List item selected', { listId, listTitle, from });
 
+            // Get current conversation state before processing
+            const conversationState = await conversationService.getConversationState(from);
+            console.log('🔍 Current conversation state before list reply:', {
+                currentStep: conversationState.currentStep,
+                hasSelectedCategory: !!conversationState.conversationData?.selectedCategory,
+                selectedCategory: conversationState.conversationData?.selectedCategory,
+                conversationData: Object.keys(conversationState.conversationData || {})
+            });
+
+            console.log('📋 Processing list reply:', {
+                listId,
+                listTitle,
+                currentStep: conversationState.currentStep,
+                messageText: listId,
+                isNumeric: !isNaN(parseInt(listId)),
+                parsedId: parseInt(listId)
+            });
+
             // Process the list selection as a regular text message
-            await this.processConversationFlow(message, listId, from, await conversationService.getConversationState(from));
+            await this.processConversationFlow(message, listId, from, conversationState);
         }
     }
 
