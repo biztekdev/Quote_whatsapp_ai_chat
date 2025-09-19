@@ -233,8 +233,8 @@ async function processMessagesAsync(webhookData, startTime) {
 
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
 
-                        // Initialize message status tracking
-                        await messageStatusService.initializeMessageStatus(
+                        // Atomically check if message can be processed and initialize if it can
+                        const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
                             messageId,
                             from,
                             messageType,
@@ -242,15 +242,18 @@ async function processMessagesAsync(webhookData, startTime) {
                             null // conversationId
                         );
 
-                        // Check if message can be processed
-                        const canProcess = await messageStatusService.canProcessMessage(messageId);
                         if (!canProcess) {
                             console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
                             continue; // Skip this message
                         }
 
-                        // Mark message as processing
-                        await messageStatusService.markAsProcessing(messageId);
+                        // Mark message as processing (atomic operation)
+                        const processingStatus = await messageStatusService.markAsProcessing(messageId);
+                        
+                        if (!processingStatus) {
+                            console.log(`⏭️ [${messageProcessingId}] Message is already being processed by another instance, skipping`);
+                            continue; // Skip this message
+                        }
 
                         // Process the message
                         console.log(`🚀 [${messageProcessingId}] About to call messageHandler.handleIncomingMessage`);
@@ -295,6 +298,7 @@ async function processMessagesAsync(webhookData, startTime) {
         const processingTime = Date.now() - startTime;
         // Async message processing failed
         console.error(`💥 [${processingId}] Processing failed:`, error);
+        throw error; // Re-throw so webhook knows processing failed
     }
 }
 
@@ -331,29 +335,56 @@ app.post('/webhook', async (req, res) => {
         //     });
         // }
         
-        // Start async processing without blocking the response
-         processMessagesAsync(webhookData, startTime).catch(error => {
-            console.error(`❌ Async processing error:`, error.message);
-        });
-        
-        // Return immediate response to WhatsApp
-        // return res.status(200).json({
-        //     status: 'success',
-        //     message: 'Webhook received and processing started',
-        //     messageCount: messageCount,
-        //     processingTime: `${responseDelay}ms`,
-        //     timestamp: new Date().toISOString(),
-        //     webhookId: webhookId
-        // });
+        // Process messages and wait for completion before responding
+        try {
+            // Add timeout to prevent hanging (30 seconds)
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Webhook processing timeout after 20 seconds')), 20000);
+            });
+            
+            await Promise.race([
+                processMessagesAsync(webhookData, startTime),
+                timeoutPromise
+            ]);
+            
+            const totalProcessingTime = Date.now() - startTime;
+            console.log(`✅ [${webhookId}] Webhook processing completed in ${totalProcessingTime}ms`);
+            
+            // Return response after processing is complete
+            return res.status(200).json({
+                status: 'success',
+                message: 'Webhook received and processing completed',
+                messageCount: messageCount,
+                processingTime: `${totalProcessingTime}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
+            
+        } catch (processingError) {
+            console.error(`❌ [${webhookId}] Processing error:`, processingError);
+            
+            const totalProcessingTime = Date.now() - startTime;
+            
+            // Return error response after processing fails
+            return res.status(200).json({
+                status: 'error',
+                message: 'Webhook received but processing failed',
+                error: processingError.message,
+                messageCount: messageCount,
+                processingTime: `${totalProcessingTime}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
+        }
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
         
         if (!res.headersSent) {
-        res.status(200).json({
-            status: 'error',
-            error: error.message,
-            processingTime: `${processingTime}ms`,
+            res.status(200).json({
+                status: 'error',
+                error: error.message,
+                processingTime: `${processingTime}ms`,
                 timestamp: new Date().toISOString(),
                 webhookId: webhookId
             });
@@ -364,31 +395,18 @@ app.post('/webhook', async (req, res) => {
 // Clear processed messages cache (for testing)
 app.post('/clear-processed-messages', async (req, res) => {
     try {
-        // Clear memory cache in MessageStatusService
-        const memoryCacheSize = messageStatusService.memoryCache.size;
-        messageStatusService.memoryCache.clear();
-
-        // Clear response tracker in message handler (if it exists)
-        let responseTrackerCount = 0;
-        if (messageHandler && messageHandler.responseTracker) {
-            responseTrackerCount = messageHandler.responseTracker.size;
-            messageHandler.responseTracker.clear();
-        }
-
-        // Clear database entries
+        // Clear database entries only
         let dbCount = 0;
         if (dbConnected) {
             const result = await messageStatusService.cleanupOldEntries(0); // Delete all entries
             dbCount = result.deletedCount;
         }
 
-        console.log(`🧹 Cleared ${memoryCacheSize} messages from memory, ${responseTrackerCount} from response tracker, and ${dbCount} from database`);
+        console.log(`🧹 Cleared ${dbCount} messages from database`);
 
         res.json({
             success: true,
-            message: 'All message caches cleared successfully',
-            clearedFromMemory: memoryCacheSize,
-            clearedFromResponseTracker: responseTrackerCount,
+            message: 'All processed messages cleared successfully',
             clearedFromDatabase: dbCount
         });
 

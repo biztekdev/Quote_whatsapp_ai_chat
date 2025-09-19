@@ -17,6 +17,30 @@ class MessageHandler {
         this.wit = wit;
         this.witService = new WitService();
         // Remove old responseTracker - now using MessageStatusService
+        
+        // Create a wrapper for whatsappService.sendMessage to track all messages
+        this.originalSendMessage = this.whatsappService.sendMessage.bind(this.whatsappService);
+        this.whatsappService.sendMessage = this.trackedSendMessage.bind(this);
+    }
+
+    // Wrapper method to track all message sending attempts
+    async trackedSendMessage(to, message, type = 'text') {
+        console.log(`🚨 DIRECT MESSAGE SEND DETECTED: ${to} - ${message.substring(0, 50)}...`);
+        console.trace('Call stack for direct message send:');
+        
+        // Try to find messageId from the call stack or context
+        // This is a fallback for direct calls that bypass sendMessageOnce
+        const result = await this.originalSendMessage(to, message, type);
+        
+        // Log this as a potential duplicate
+        await mongoLogger.warn('Direct message send detected (bypassed sendMessageOnce)', {
+            to,
+            message: message.substring(0, 100),
+            type,
+            source: 'direct-whatsapp-service-call'
+        });
+        
+        return result;
     }
 
     // Check if we've already responded to a message using MessageStatusService
@@ -79,12 +103,36 @@ class MessageHandler {
         }
     }
 
+    // Helper method for sending messages when we don't have a messageId (fallback)
+    async sendMessageFallback(to, message, type = 'text') {
+        try {
+            console.log(`📤 Sending fallback message to ${to}`);
+            const result = await this.whatsappService.sendMessage(to, message, type);
+            return result;
+        } catch (error) {
+            console.error(`❌ Error in sendMessageFallback:`, error);
+            throw error;
+        }
+    }
+
     async handleIncomingMessage(message, value = null) {
         const messageId = message.id;
         const from = message.from;
         const messageType = message.type;
 
         try {
+            // Check for empty text messages early
+            if (messageType === 'text' && (!message.text?.body || message.text.body.trim() === '')) {
+                console.log(`⏭️ Empty text message received from ${from}, skipping processing`);
+                await mongoLogger.info('Empty text message received, skipping processing', { 
+                    messageType, 
+                    from, 
+                    messageId,
+                    messageText: message.text?.body || 'empty'
+                });
+                return;
+            }
+
             await mongoLogger.logMessage(message, from);
             await mongoLogger.info('Message received', { messageType, from, messageId });
 
@@ -203,6 +251,17 @@ class MessageHandler {
         try {
             messageText = message.text.body;
 
+            // Check if message is empty, null, or undefined
+            if (!messageText || messageText.trim() === '') {
+                console.log(`⏭️ Empty message received from ${from}, skipping processing`);
+                await mongoLogger.info('Empty message received, skipping processing', { 
+                    from, 
+                    messageId: message.id,
+                    messageText: messageText || 'empty'
+                });
+                return;
+            }
+
             // Check if conversation is already completed
             let conversationState = await conversationService.getConversationState(from);
             if (conversationState.conversationData?.completed || conversationState.currentStep === 'completed') {
@@ -223,7 +282,7 @@ class MessageHandler {
                 await conversationService.resetConversation(from);
                 
                 // Send greeting response for new conversation
-                await this.handleGreetingResponse(messageText, from);
+                await this.handleGreetingResponse(messageText, from, message.id);
                 return;
             }
 
@@ -235,7 +294,16 @@ class MessageHandler {
             let witEntities = {};
             
             try {
+                console.log("🤖 Processing message with Wit.ai:", messageText);
                 witResponse = await this.witService.processMessage(messageText);
+                
+                // Log the complete Wit.ai response
+                console.log("📊 Complete Wit.ai Response:", JSON.stringify(witResponse, null, 2));
+                console.log("🎯 Wit.ai Entities:", JSON.stringify(witResponse?.data?.entities || {}, null, 2));
+                console.log("🧠 Wit.ai Intents:", JSON.stringify(witResponse?.data?.intents || [], null, 2));
+                console.log("💬 Wit.ai Text:", witResponse?.data?.text || 'No text');
+                console.log("🎚️ Wit.ai Confidence:", witResponse?.data?.confidence || 'No confidence');
+                
                 witEntities = witResponse?.data?.entities || {};
                 
             } catch (witError) {
@@ -294,21 +362,8 @@ class MessageHandler {
             });
 
             try {
-                // Provide more specific error messages and recovery options
-                let errorMessage = "Sorry, I encountered an error processing your message.";
-                
-                if (error.message && error.message.includes('Wit.ai')) {
-                    errorMessage = "I'm having trouble understanding your message right now.";
-                } else if (error.message && error.message.includes('database')) {
-                    errorMessage = "I'm having trouble accessing my data.";
-                } else if (error.message && error.message.includes('network')) {
-                    errorMessage = "There seems to be a connection issue.";
-                }
-                
-                // Add helpful recovery options
-                errorMessage += " Please try again or type 'hi' to restart our conversation.";
-                
-                await this.whatsappService.sendMessage(
+                await this.sendMessageOnce(
+                    message.id,
                     from,
                     errorMessage
                 );
@@ -395,12 +450,17 @@ class MessageHandler {
 
             // Process each entity type in sorted order
             for (const [entityType, entityArray] of sortedEntityEntries) {
-                console.log(`Processing entity type: ${entityType}`, entityArray);
+                console.log(`🔍 Processing entity type: ${entityType}`, JSON.stringify(entityArray, null, 2));
 
                 for (const entity of entityArray) {
                     try {
                         const { value, confidence, body } = entity;
-                        console.log(`Entity: ${entityType}`, { value, confidence, body });
+                        console.log(`📝 Entity Details - Type: ${entityType}`, { 
+                            value, 
+                            confidence, 
+                            body,
+                            fullEntity: JSON.stringify(entity, null, 2)
+                        });
 
                         if (confidence > 0.5) {
                             switch (entityType) {
@@ -520,7 +580,9 @@ class MessageHandler {
                                         };
                                         console.log("Found material:", findMaterial.name);
                                     } else {
-                                        console.log("Material not found:", material);
+                                        // Store the requested material even if not found in database
+                                        updatedData.requestedMaterial = material;
+                                        console.log("Material not found in database, storing as requested:", material);
                                     }
                                     break;
                                 case 'quantities:quantities':
@@ -548,6 +610,7 @@ class MessageHandler {
                 }
             }
 
+            console.log("✅ Final Updated Conversation Data:", JSON.stringify(updatedData, null, 2));
             return updatedData;
         } catch (error) {
             console.error('Error in extractAndUpdateConversationData:', error);
@@ -673,13 +736,23 @@ class MessageHandler {
 
     async findMaterialByName(materialName) {
         try {
+            console.log("Searching for material:", materialName);
+            
             // Search all active materials
             const materials = await Material.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            console.log("Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
             
-            // Search in name field
+            // Search in name field (exact match first)
             let foundMaterial = materials.find(material =>
-                material.name.toLowerCase().includes(materialName.toLowerCase())
+                material.name.toLowerCase() === materialName.toLowerCase()
             );
+            
+            // If not found, search for partial match in name
+            if (!foundMaterial) {
+                foundMaterial = materials.find(material =>
+                    material.name.toLowerCase().includes(materialName.toLowerCase())
+                );
+            }
             
             // If not found in name, search in description
             if (!foundMaterial) {
@@ -688,7 +761,18 @@ class MessageHandler {
                 );
             }
             
-            // If not found in description, search in erp_id
+            // If not found in description, try searching for individual parts (for composite materials like "PET + MPET + PE")
+            if (!foundMaterial) {
+                const materialParts = materialName.split('+').map(part => part.trim());
+                for (const part of materialParts) {
+                    foundMaterial = materials.find(material =>
+                        material.name.toLowerCase().includes(part.toLowerCase())
+                    );
+                    if (foundMaterial) break;
+                }
+            }
+            
+            // If not found, search in erp_id
             if (!foundMaterial) {
                 const erpId = parseInt(materialName);
                 if (!isNaN(erpId)) {
@@ -696,6 +780,7 @@ class MessageHandler {
                 }
             }
             
+            console.log("Material search result:", foundMaterial ? foundMaterial.name : "Not found");
             return foundMaterial;
         } catch (error) {
             console.error('Error finding material by name:', error);
@@ -831,7 +916,7 @@ class MessageHandler {
                             await this.handleStartStep(messageText, from, message.id);
                             break;
                         case 'greeting_response':
-                            await this.handleGreetingResponse(messageText, from);
+                            await this.handleGreetingResponse(messageText, from, message.id);
                             break;
                         case 'category_selection':
                             await this.handleCategorySelection(messageText, from);
@@ -840,7 +925,7 @@ class MessageHandler {
                             await this.handleProductSelection(messageText, from);
                             break;
                         case 'dimension_input':
-                            await this.handleDimensionInput(messageText, from, conversationData);
+                            await this.handleDimensionInput(messageText, from, conversationData, message);
                             break;
                         case 'material_selection':
                             await this.handleMaterialSelection(messageText, from, conversationData);
@@ -852,7 +937,7 @@ class MessageHandler {
                             await this.handleQuantityInput(messageText, from, conversationData);
                             break;
                         case 'quote_generation':
-                            await this.handleQuoteGeneration(messageText, from, conversationData);
+                            await this.handleQuoteGeneration(messageText, from, conversationData, message);
                             break;
                         default:
                             console.log(`Unknown step: ${currentStep}, defaulting to start step`);
@@ -886,7 +971,7 @@ class MessageHandler {
         } catch (error) {
             await mongoLogger.logError(error, { source: 'conversation-flow' });
             // Only send error message if we haven't already responded
-            if (!this.hasResponded(message.id)) {
+            if (!(await this.hasResponded(message.id))) {
                 await this.sendMessageOnce(
                     message.id,
                     from,
@@ -973,7 +1058,7 @@ Would you like to get a quote for mylar bags today?`;
         await this.whatsappService.sendButtonMessage(from, bodyText, buttons);
     }
 
-    async handleGreetingResponse(messageText, from) {
+    async handleGreetingResponse(messageText, from, messageId = null) {
         const response = messageText.toLowerCase().trim();
         console.log('Message response ', response);
 
@@ -984,7 +1069,8 @@ Would you like to get a quote for mylar bags today?`;
             });
             await this.sendCategorySelection(from);
         } else if (response.includes('no') || response === 'quote_no') {
-            await this.whatsappService.sendMessage(
+            await this.sendMessageOnce(
+                messageId,
                 from,
                 "No problem! If you change your mind or have any questions about our mylar bags, feel free to reach out anytime. Have a great day! 😊"
             );
@@ -994,22 +1080,31 @@ Would you like to get a quote for mylar bags today?`;
                 completedAt: new Date()
             });
         } else {
-            await this.whatsappService.sendMessage(
+            await this.sendMessageOnce(
+                messageId,
                 from,
                 "Please reply with 'Yes' if you want a quote or 'No' if you don't need one right now."
             );
         }
     }
 
-    async sendCategorySelection(from) {
+    async sendCategorySelection(from, messageId = null) {
         try {
             const categories = await conversationService.getProductCategories();
 
             if (!categories || categories.length === 0) {
-                await this.whatsappService.sendMessage(
-                    from,
-                    "Sorry, no product categories are available at the moment. Please try again later."
-                );
+                if (messageId) {
+                    await this.sendMessageOnce(
+                        messageId,
+                        from,
+                        "Sorry, no product categories are available at the moment. Please try again later."
+                    );
+                } else {
+                    await this.sendMessageFallback(
+                        from,
+                        "Sorry, no product categories are available at the moment. Please try again later."
+                    );
+                }
                 return;
             }
 
@@ -1087,7 +1182,7 @@ Would you like to get a quote for mylar bags today?`;
         // }
     }
 
-    async sendProductSelection(from) {
+    async sendProductSelection(from, messageId = null) {
         // try {
         // Get conversation state to access selected category
         const conversationState = await conversationService.getConversationState(from);
@@ -1113,11 +1208,46 @@ Would you like to get a quote for mylar bags today?`;
             return;
         }
 
-        const bodyText = `Great! 📦 You've selected the ${selectedCategory.name} category.
+        // Get all the information we have so far
+        const conversationData = conversationState.conversationData || {};
+        
+        // Build acknowledgment message with all collected information
+        let bodyText = `Great! 📦 I've gathered the following information from your request:\n\n`;
+        
+        // Category
+        bodyText += `📂 **Category:** ${selectedCategory.name}\n`;
+        
+        // Material (if available)
+        if (conversationData.selectedMaterial && conversationData.selectedMaterial.name) {
+            bodyText += `🧱 **Material:** ${conversationData.selectedMaterial.name}\n`;
+        } else if (conversationData.requestedMaterial) {
+            bodyText += `🧱 **Material:** ${conversationData.requestedMaterial}\n`;
+        }
+        
+        // Quantity (if available)
+        if (conversationData.quantity && conversationData.quantity.length > 0) {
+            bodyText += `🔢 **Quantity:** ${conversationData.quantity.join(', ')}\n`;
+        }
+        
+        // Dimensions (if available)
+        if (conversationData.dimensions && conversationData.dimensions.length > 0) {
+            const dimensionsText = conversationData.dimensions.map(d => `${d.name}: ${d.value}`).join(', ');
+            bodyText += `📏 **Dimensions:** ${dimensionsText}\n`;
+        }
+        
+        // Finishes (if available)
+        if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+            const finishNames = conversationData.selectedFinish.map(f => f.name).join(', ');
+            bodyText += `✨ **Finishes:** ${finishNames}\n`;
+        }
+        
+        bodyText += `\nWhat is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
 
-What is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
-
-        await this.whatsappService.sendMessage(from, bodyText);
+        if (messageId) {
+            await this.sendMessageOnce(messageId, from, bodyText);
+        } else {
+            await this.sendMessageFallback(from, bodyText);
+        }
         // } catch (error) {
         //     await mongoLogger.logError(error, { source: 'send-product-selection' });
         //     await this.whatsappService.sendMessage(
@@ -1199,23 +1329,31 @@ What is the name of the product you're looking for? Please type the product name
         const dimensionNames = dimensionFields.map(field => field.name).join(', ');
         const dimensionUnits = dimensionFields.map(field => field.unit || 'inches').join(', ');
 
-        const message = `Perfect! You selected: *${product.name}* 📏
+        // Get conversation state to show all collected information
+        const conversationState = await conversationService.getConversationState(from);
+        const conversationData = conversationState.conversationData || {};
 
-Now I need the dimensions for your product.
-
-Required dimensions: *${dimensionNames}*
-
-Please provide dimensions in one of these formats:
-• ${dimensionFields.map(field => field.name).join(' x ')} (e.g., "10 x 8 x 3")
-• Separated by commas (e.g., "10, 8, 3")
-• With labels (e.g., "L:10, W:8, H:3")
-
-All dimensions should be in ${dimensionUnits}.`;
+        let message = `Perfect! You selected: *${product.name}* 📏\n\n`;
+        
+        // Show all collected information
+        message += `Here's what I have so far:\n`;
+        message += `📂 **Category:** ${conversationData.selectedCategory?.name || 'Not specified'}\n`;
+        message += `🧱 **Material:** ${conversationData.selectedMaterial?.name || conversationData.requestedMaterial || 'Not specified'}\n`;
+        message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
+        message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
+        
+        message += `Now I need the dimensions for your product.\n\n`;
+        message += `Required dimensions: *${dimensionNames}*\n\n`;
+        message += `Please provide dimensions in one of these formats:\n`;
+        message += `• ${dimensionFields.map(field => field.name).join(' x ')} (e.g., "10 x 8 x 3")\n`;
+        message += `• Separated by commas (e.g., "10, 8, 3")\n`;
+        message += `• With labels (e.g., "L:10, W:8, H:3")\n\n`;
+        message += `All dimensions should be in ${dimensionUnits}.`;
 
         await this.whatsappService.sendMessage(from, message);
     }
 
-    async handleDimensionInput(messageText, from, conversationData) {
+    async handleDimensionInput(messageText, from, conversationData, message = null) {
         try {
             // Check if dimensions already exist
             if (conversationData.dimensions && conversationData.dimensions.length > 0) {
@@ -1250,8 +1388,86 @@ All dimensions should be in ${dimensionUnits}.`;
                 }
             }
 
-            // We have a product, ask for dimensions
+            // Try to extract dimensions from the message using Wit.ai
+            console.log("Attempting to extract dimensions from message:", messageText);
+            
+            try {
+                const witResponse = await this.witService.processMessage(messageText);
+                console.log("Wit.ai response for dimensions:", JSON.stringify(witResponse, null, 2));
+
+                if (witResponse.entities && witResponse.entities['dimensions:dimensions']) {
+                    console.log("Found dimensions in Wit.ai response, processing...");
+                    
+                    // Extract and update conversation data with dimensions
+                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData);
+                    
+                    if (updatedData.dimensions && updatedData.dimensions.length > 0) {
+                        console.log("Successfully extracted dimensions:", updatedData.dimensions);
+                        
+                        // Update conversation state with dimensions
+                        await conversationService.updateConversationState(from, {
+                            dimensions: updatedData.dimensions
+                        });
+
+                        // Move to next step
+                        const nextStep = this.getNextStepAfterBypass('dimension_input', updatedData);
+                        await conversationService.updateConversationState(from, {
+                            currentStep: nextStep
+                        });
+
+                        // Process the next step
+                        const updatedState = await conversationService.getConversationState(from);
+                        await this.processConversationFlow(message, messageText, from, updatedState, true);
+                        return;
+                    }
+                }
+            } catch (witError) {
+                console.log("Wit.ai extraction failed, trying manual parsing:", witError.message);
+            }
+
+            // If Wit.ai extraction failed, try manual parsing
             const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+            if (product && product.dimensionFields) {
+                const dimensionNames = product.dimensionFields.map(f => f.name);
+                const dimensionValues = this.parseDimensionValues(messageText);
+                
+                if (dimensionValues.length > 0) {
+                    console.log("Manually parsed dimensions:", dimensionValues);
+                    
+                    // Map dimension values to product dimension fields
+                    const dimensions = [];
+                    product.dimensionFields.forEach((field, index) => {
+                        if (dimensionValues[index] !== undefined) {
+                            dimensions.push({
+                                name: field.name,
+                                value: dimensionValues[index]
+                            });
+                        }
+                    });
+
+                    if (dimensions.length > 0) {
+                        console.log("Successfully parsed dimensions manually:", dimensions);
+                        
+                        // Update conversation state with dimensions
+                        await conversationService.updateConversationState(from, {
+                            dimensions: dimensions
+                        });
+
+                        // Move to next step
+                        const nextStep = this.getNextStepAfterBypass('dimension_input', { ...conversationData, dimensions });
+                        await conversationService.updateConversationState(from, {
+                            currentStep: nextStep
+                        });
+
+                        // Process the next step
+                        const updatedState = await conversationService.getConversationState(from);
+                        await this.processConversationFlow(message, messageText, from, updatedState, true);
+                        return;
+                    }
+                }
+            }
+
+            // If no dimensions were extracted, ask for them
 
             if (!product || !product.dimensionFields) {
                 await this.whatsappService.sendMessage(
@@ -1331,10 +1547,22 @@ All dimensions should be in ${dimensionUnits}.`;
                 return;
             }
 
-            await this.whatsappService.sendMessage(
-                from,
-                `Great! Now please select the material for your ${category.name} products.\n\nType your material name.`
-            );
+            // Get conversation state to show all collected information
+            const conversationState = await conversationService.getConversationState(from);
+            const conversationData = conversationState.conversationData || {};
+
+            let message = `Great! Now please select the material for your ${category.name} products.\n\n`;
+            
+            // Show all collected information
+            message += `Here's what I have so far:\n`;
+            message += `📂 **Category:** ${conversationData.selectedCategory?.name || 'Not specified'}\n`;
+            message += `🔧 **Product:** ${conversationData.selectedProduct?.name || 'Not specified'}\n`;
+            message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
+            message += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified'}\n`;
+            message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
+            message += `Type your material name.`;
+
+            await this.whatsappService.sendMessage(from, message);
         } catch (error) {
             console.error('Error in sendMaterialRequest:', error);
             await mongoLogger.logError(error, {
@@ -1626,7 +1854,7 @@ What quantity would you like?`;
         }
     }
 
-    async handleQuoteGeneration(messageText, from, conversationData) {
+    async handleQuoteGeneration(messageText, from, conversationData, message) {
         console.log("conversationData111111111 ", conversationData);
         try {
             // Validate required data before proceeding
@@ -1677,7 +1905,11 @@ Based on the information you've provided, would you like me to generate pricing 
 
 Please reply with "Yes" to get pricing details, or "No" if you'd like to make any changes.`;
 
-                await this.whatsappService.sendMessage(from, acknowledgmentMessage);
+                await this.sendMessageOnce(
+                    message.id,
+                    from,
+                    acknowledgmentMessage
+                );
 
                 // Mark as acknowledged and wait for response
                 await conversationService.updateConversationState(from, {
@@ -1702,7 +1934,7 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                             'conversationData.wantsPdf': true
                         });
 
-                        await this.generateAndSendPDF(from, conversationData);
+                        await this.generateAndSendPDF(from, conversationData, message.id);
                         
                         // Send completion message using sendMessageOnce to prevent duplicates
                         await this.sendMessageOnce(
@@ -1758,22 +1990,40 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                     // User is responding to initial pricing question
                     if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
                         // User wants pricing, generate and send quote
-                        const pricing = await this.getPricingForQuote(conversationData);
+                        try {
+                            console.log("User wants pricing, calling getPricingForQuote...");
+                            const pricing = await this.getPricingForQuote(conversationData);
+                            console.log("Pricing result:", pricing);
 
-                        if (pricing && !pricing.error) {
-                            // Store pricing in conversation data
-                            await conversationService.updateConversationState(from, {
-                                'conversationData.pricingData': pricing,
-                                'conversationData.pricing_done': true
+                            if (pricing && !pricing.error) {
+                                // Store pricing in conversation data
+                                await conversationService.updateConversationState(from, {
+                                    'conversationData.pricingData': pricing,
+                                    'conversationData.pricing_done': true
+                                });
+
+                                // Send beautiful pricing table
+                                await this.sendPricingTable(from, conversationData, pricing, message.id);
+                            } else {
+                                // Handle pricing error
+                                await this.sendMessageOnce(
+                                    message.id,
+                                    from,
+                                    "Sorry, I couldn't get pricing information at the moment. Please try again later or contact our support team."
+                                );
+                            }
+                        } catch (pricingError) {
+                            console.error("Error in pricing generation:", pricingError);
+                            await mongoLogger.logError(pricingError, {
+                                source: 'pricing-generation',
+                                from: from,
+                                conversationData: conversationData
                             });
-
-                            // Send beautiful pricing table
-                            await this.sendPricingTable(from, conversationData, pricing);
-                        } else {
-                            // Handle pricing error
-                            await this.whatsappService.sendMessage(
+                            
+                            await this.sendMessageOnce(
+                                message.id,
                                 from,
-                                "Sorry, I couldn't get pricing information at the moment. Please try again later or contact our support team."
+                                "Sorry, I encountered an error generating your pricing. Please try again later or contact our support team."
                             );
                         }
                     } else if (response.includes('no') || response.includes('n') || response.includes('not')) {
@@ -1784,7 +2034,11 @@ I'm always here to help you whenever you need a quote. Just say "Hi" or "Get Quo
 
 Have a great day! 🌟`;
 
-                        await this.whatsappService.sendMessage(from, goodbyeMessage);
+                        await this.sendMessageOnce(
+                            message.id,
+                            from,
+                            goodbyeMessage
+                        );
 
                         // Inactivate conversation
                         await conversationService.updateConversationState(from, {
@@ -1795,14 +2049,16 @@ Have a great day! 🌟`;
 
                     } else {
                         // Unclear response, ask for clarification
-                        await this.whatsappService.sendMessage(
+                        await this.sendMessageOnce(
+                            message.id,
                             from,
                             "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
                         );
                     }
                 } else {
                     // Unclear response, ask for clarification
-                    await this.whatsappService.sendMessage(
+                    await this.sendMessageOnce(
+                        message.id,
                         from,
                         "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
                     );
@@ -1817,7 +2073,8 @@ Have a great day! 🌟`;
                 messageText: messageText
             });
 
-            await this.whatsappService.sendMessage(
+            await this.sendMessageOnce(
+                message.id,
                 from,
                 "Sorry, I encountered an error processing your request. Please try again or type 'hi' to restart."
             );
@@ -1826,15 +2083,25 @@ Have a great day! 🌟`;
 
     async getPricingForQuote(conversationData) {
         try {
+            console.log("getPricingForQuote - conversationData:", JSON.stringify(conversationData, null, 2));
+            
             // Prepare the payload for the pricing API
             const payload = {
                 file_type: conversationData.selectedCategory?.erp_id?.toString() || "1",
                 product_id: conversationData.selectedProduct?.erp_id || 26,
                 material_id: conversationData.selectedMaterial?._id || 55,
-                finishes: conversationData.selectedFinish?.map(finish => ({
-                    id: parseInt(finish._id),
-                    value: null
-                })) || [],
+                finishes: conversationData.selectedFinish?.map(finish => {
+                    console.log("Processing finish:", finish);
+                    const finishId = parseInt(finish._id);
+                    if (isNaN(finishId)) {
+                        console.error("Invalid finish ID:", finish._id);
+                        throw new Error(`Invalid finish ID: ${finish._id}`);
+                    }
+                    return {
+                        id: finishId,
+                        value: null
+                    };
+                }) || [],
                 quantities: conversationData.quantity || [],
                 dimensions: conversationData.dimensions?.map(dim => dim.value) || []
             };
@@ -1842,6 +2109,8 @@ Have a great day! 🌟`;
             console.log("Pricing API Payload:", JSON.stringify(payload, null, 2));
 
             // Make API call to get pricing
+            console.log("Making API call to:", `${process.env.ERP_API_BASE_URL}/api/get-quote-price-for-whatsapp`);
+            
             const response = await fetch(`${process.env.ERP_API_BASE_URL}/api/get-quote-price-for-whatsapp`, {
                 method: 'POST',
                 headers: {
@@ -1852,8 +2121,12 @@ Have a great day! 🌟`;
                 body: JSON.stringify(payload)
             });
 
+            console.log("API Response status:", response.status, response.statusText);
+
             if (!response.ok) {
-                throw new Error(`Pricing API error: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                console.error("API Error Response:", errorText);
+                throw new Error(`Pricing API error: ${response.status} ${response.statusText} - ${errorText}`);
             }
 
             const pricingData = await response.json();
@@ -1877,8 +2150,7 @@ Have a great day! 🌟`;
         }
     }
 
-
-    async sendPricingTable(from, conversationData, pricingData) {
+    async sendPricingTable(from, conversationData, pricingData, messageId = null) {
         try {
             const { qty, unit_cost } = pricingData;
             
@@ -1924,7 +2196,11 @@ Have a great day! 🌟`;
             pricingMessage += `📄 Would you like me to generate a detailed PDF quote for your records?\n\n`;
             pricingMessage += `Reply with "Yes" for PDF or "No" to finish.`;
 
-            await this.whatsappService.sendMessage(from, pricingMessage);
+            if (messageId) {
+                await this.sendMessageOnce(messageId, from, pricingMessage);
+            } else {
+                await this.whatsappService.sendMessage(from, pricingMessage);
+            }
 
         } catch (error) {
             console.error('Error sending pricing table:', error);
@@ -1945,15 +2221,19 @@ Have a great day! 🌟`;
         }
     }
 
-    async generateAndSendPDF(from, conversationData) {
+    async generateAndSendPDF(from, conversationData, messageId = null) {
         try {
             console.log("Generating PDF for:", from);
+            console.log("Conversation data for PDF:", JSON.stringify(conversationData, null, 2));
             
             // Create PDF document using PDFKit
+            console.log("Creating PDF document...");
             const pdfBuffer = await this.createPDFDocument(conversationData);
+            console.log("PDF document created, buffer size:", pdfBuffer.length);
             
             // For Vercel compatibility, try buffer approach first
             try {
+                console.log("Attempting to send PDF via buffer...");
                 // Send PDF directly from buffer (Vercel-friendly)
                 await this.whatsappService.sendDocument(from, {
                     buffer: pdfBuffer,
@@ -1964,10 +2244,12 @@ Have a great day! 🌟`;
                 console.log("PDF sent successfully via buffer to:", from);
                 
             } catch (bufferError) {
-                console.log("Buffer upload failed, trying file approach:", bufferError.message);
+                console.error("Buffer upload failed:", bufferError);
+                console.log("Trying file approach...");
                 
                 // Fallback to file approach
                 const tempPath = await this.createTempPDF(pdfBuffer, from);
+                console.log("Temp PDF created at:", tempPath);
                 
                 // Send PDF via WhatsApp
                 await this.whatsappService.sendDocument(from, {
@@ -1986,8 +2268,9 @@ Have a great day! 🌟`;
                 from: from
             });
             
-            // Fallback message - direct send for error cases
-            await this.whatsappService.sendMessage(
+            // Fallback message - use sendMessageOnce to prevent duplicates
+            await this.sendMessageOnce(
+                messageId || 'pdf-error',
                 from,
                 "Sorry, I couldn't generate the PDF at the moment. However, you have all the pricing information above. Please contact our support if you need assistance."
             );
@@ -1996,8 +2279,13 @@ Have a great day! 🌟`;
 
     async createPDFDocument(conversationData) {
         try {
+            console.log("Starting PDF creation...");
+            console.log("Conversation data:", JSON.stringify(conversationData, null, 2));
+            
             // Import PDFKit dynamically
+            console.log("Importing PDFKit...");
             const PDFDocument = (await import('pdfkit')).default;
+            console.log("PDFKit imported successfully");
             
             const doc = new PDFDocument({ 
                 size: 'A4',
@@ -2008,7 +2296,9 @@ Have a great day! 🌟`;
             
             // Collect PDF data
             doc.on('data', chunk => chunks.push(chunk));
-            doc.on('end', () => {});
+            doc.on('end', () => {
+                console.log("PDF generation completed");
+            });
             
             const pageWidth = doc.page.width;
             const pageHeight = doc.page.height;
@@ -2102,7 +2392,13 @@ Have a great day! 🌟`;
             const colWidth = 100;
             
             if (conversationData.pricingData) {
+                console.log("Pricing data found:", conversationData.pricingData);
                 const { qty, unit_cost } = conversationData.pricingData;
+                
+                if (!qty || !unit_cost) {
+                    console.error("Invalid pricing data structure:", { qty, unit_cost });
+                    throw new Error("Invalid pricing data structure");
+                }
                 
                 // Table headers
                 doc.fontSize(12)
@@ -2144,6 +2440,13 @@ Have a great day! 🌟`;
                 doc.moveTo(tableStartX, tableY + 70)
                    .lineTo(tableStartX + colWidth * 4, tableY + 70)
                    .stroke(primaryColor);
+            } else {
+                console.log("No pricing data available for PDF");
+                // Add a message indicating no pricing data
+                doc.fontSize(12)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Pricing information not available', tableStartX, tableY);
             }
             
             // Footer section
@@ -2486,7 +2789,7 @@ Would you like to:`;
             await mongoLogger.info('List item selected', { listId, listTitle, from });
 
             // Process the list selection as a regular text message
-            await this.processConversationFlow(listId, from, await conversationService.getConversationState(from));
+            await this.processConversationFlow(message, listId, from, await conversationService.getConversationState(from));
         }
     }
 

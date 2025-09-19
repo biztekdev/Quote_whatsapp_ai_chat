@@ -1,10 +1,11 @@
 import { MessageStatus } from '../models/messageStatusModel.js';
 import mongoLogger from './mongoLogger.js';
 
+// Database-level processing locks to prevent race conditions across multiple instances
+
 class MessageStatusService {
     constructor() {
-        this.memoryCache = new Map(); // For fast lookups
-        this.maxCacheSize = 10000; // Maximum entries in memory cache
+        // No caching - direct database operations only
     }
 
     /**
@@ -12,19 +13,11 @@ class MessageStatusService {
      */
     async initializeMessageStatus(messageId, from, messageType, webhookData = null, conversationId = null) {
         try {
-            // Check memory cache first
-            if (this.memoryCache.has(messageId)) {
-                console.log(`📋 Message ${messageId} already in memory cache`);
-                return this.memoryCache.get(messageId);
-            }
-
-            // Check database
+            // Check database directly
             let existingStatus = await MessageStatus.findByMessageId(messageId);
 
             if (existingStatus) {
                 console.log(`📋 Message ${messageId} already exists in database`);
-                // Update memory cache
-                this.memoryCache.set(messageId, existingStatus);
                 return existingStatus;
             }
 
@@ -40,12 +33,6 @@ class MessageStatusService {
             });
 
             await newStatus.save();
-
-            // Add to memory cache
-            this.memoryCache.set(messageId, newStatus);
-
-            // Clean up memory cache if it's getting too large
-            this.cleanupMemoryCache();
 
             console.log(`✅ Initialized status tracking for message ${messageId}`);
             await mongoLogger.info('Message status initialized', {
@@ -71,24 +58,37 @@ class MessageStatusService {
     }
 
     /**
-     * Mark message as being processed
+     * Mark message as being processed (atomic operation)
      */
     async markAsProcessing(messageId) {
         try {
-            const status = await this.getMessageStatus(messageId);
-            if (!status) {
-                throw new Error(`Message status not found for ${messageId}`);
+            // Use atomic update to mark as processing only if it's still pending
+            const result = await MessageStatus.findOneAndUpdate(
+                { 
+                    messageId: messageId,
+                    processingStatus: 'pending' // Only update if still pending
+                },
+                {
+                    $set: {
+                        processingStatus: 'processing',
+                        processedAt: new Date()
+                    }
+                },
+                { 
+                    new: true,
+                    runValidators: true
+                }
+            );
+
+            if (!result) {
+                console.log(`⚠️ Message ${messageId} is already being processed or doesn't exist`);
+                return null;
             }
-
-            await status.markAsProcessing();
-
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`🔄 Marked message ${messageId} as processing`);
             await mongoLogger.info('Message marked as processing', { messageId });
 
-            return status;
+            return result;
 
         } catch (error) {
             console.error(`❌ Error marking message ${messageId} as processing:`, error);
@@ -113,9 +113,6 @@ class MessageStatusService {
             }
 
             await status.markAsProcessed();
-
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`✅ Marked message ${messageId} as processed`);
             await mongoLogger.info('Message marked as processed', { messageId });
@@ -146,8 +143,6 @@ class MessageStatusService {
 
             await status.markAsFailed(error);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`❌ Marked message ${messageId} as failed: ${error}`);
             await mongoLogger.error('Message processing failed', {
@@ -198,6 +193,70 @@ class MessageStatusService {
     }
 
     /**
+     * Atomically check if message can be processed and initialize if it can
+     * This prevents race conditions in webhook processing across multiple instances
+     */
+    async atomicCheckAndInitialize(messageId, from, messageType, webhookData = null, conversationId = null) {
+        try {
+            // Use findOneAndUpdate with upsert to atomically check and initialize
+            // This ensures only one instance can process the message
+            const result = await MessageStatus.findOneAndUpdate(
+                { 
+                    messageId: messageId,
+                    processingStatus: { $ne: 'processing' } // Only if not already processing
+                },
+                {
+                    $setOnInsert: {
+                        messageId,
+                        from,
+                        messageType,
+                        webhookData,
+                        conversationId,
+                        processingStatus: 'pending',
+                        responseStatus: 'not_sent',
+                        receivedAt: new Date()
+                    }
+                },
+                { 
+                    upsert: true, 
+                    new: true,
+                    runValidators: true
+                }
+            );
+
+            // Check if this was a new document (upserted) or existing
+            const isNew = !result.createdAt || result.createdAt.getTime() === result.updatedAt.getTime();
+            
+            if (isNew) {
+                console.log(`✅ Atomically initialized status tracking for message ${messageId}`);
+                await mongoLogger.info('Message status atomically initialized', {
+                    messageId,
+                    from,
+                    messageType,
+                    conversationId
+                });
+                return { canProcess: true, status: result };
+            } else {
+                // Document already existed, check if it can be processed
+                const canProcess = !result.hasBeenProcessed() && result.processingStatus !== 'processing';
+                console.log(`🔍 Message ${messageId} already exists, can process: ${canProcess} (status: ${result.processingStatus})`);
+                return { canProcess, status: result };
+            }
+
+        } catch (error) {
+            console.error(`❌ Error in atomic check and initialize for ${messageId}:`, error);
+            await mongoLogger.logError(error, {
+                source: 'message-status-service',
+                operation: 'atomic-check-initialize',
+                messageId,
+                from,
+                error: error.message
+            });
+            return { canProcess: false, status: null };
+        }
+    }
+
+    /**
      * Mark response as being sent
      */
     async markResponseAsSending(messageId) {
@@ -209,8 +268,6 @@ class MessageStatusService {
 
             await status.markResponseAsSending();
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`📤 Marked response for message ${messageId} as sending`);
             await mongoLogger.info('Response marked as sending', { messageId });
@@ -241,8 +298,6 @@ class MessageStatusService {
 
             await status.markResponseAsSent(responseMessageId, responseType);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`✅ Marked response for message ${messageId} as sent`);
             await mongoLogger.info('Response marked as sent', {
@@ -277,8 +332,6 @@ class MessageStatusService {
 
             await status.markResponseAsFailed(error);
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`❌ Marked response for message ${messageId} as failed: ${error}`);
             await mongoLogger.error('Response marked as failed', {
@@ -357,23 +410,12 @@ class MessageStatusService {
     }
 
     /**
-     * Get message status (from cache or database)
+     * Get message status from database
      */
     async getMessageStatus(messageId) {
         try {
-            // Check memory cache first
-            if (this.memoryCache.has(messageId)) {
-                return this.memoryCache.get(messageId);
-            }
-
-            // Check database
+            // Check database directly
             const status = await MessageStatus.findByMessageId(messageId);
-
-            if (status) {
-                // Update memory cache
-                this.memoryCache.set(messageId, status);
-            }
-
             return status;
 
         } catch (error) {
@@ -445,22 +487,6 @@ class MessageStatusService {
         }
     }
 
-    /**
-     * Clean up memory cache to prevent memory leaks
-     */
-    cleanupMemoryCache() {
-        if (this.memoryCache.size > this.maxCacheSize) {
-            // Remove oldest entries (simple FIFO)
-            const entries = Array.from(this.memoryCache.entries());
-            const toRemove = entries.slice(0, this.memoryCache.size - this.maxCacheSize + 100);
-
-            toRemove.forEach(([key]) => {
-                this.memoryCache.delete(key);
-            });
-
-            console.log(`🧹 Cleaned up ${toRemove.length} entries from memory cache`);
-        }
-    }
 
     /**
      * Get statistics about message processing
@@ -499,8 +525,6 @@ class MessageStatusService {
                 responseFailed: 0
             };
 
-            result.memoryCacheSize = this.memoryCache.size;
-
             return result;
 
         } catch (error) {
@@ -516,7 +540,6 @@ class MessageStatusService {
                 responded: 0,
                 failed: 0,
                 responseFailed: 0,
-                memoryCacheSize: this.memoryCache.size
             };
         }
     }
@@ -541,8 +564,6 @@ class MessageStatusService {
 
             await status.save();
 
-            // Update memory cache
-            this.memoryCache.set(messageId, status);
 
             console.log(`🔄 Reset status for message ${messageId}`);
             await mongoLogger.info('Message status reset', { messageId });
