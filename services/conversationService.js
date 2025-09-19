@@ -97,9 +97,17 @@ class ConversationService {
 
             console.log(`🔄 Conversation state updated for ${phone}: ${state.currentStep}`);
             console.log('📋 Updated conversation data:', JSON.stringify(state.conversationData, null, 2));
+            
+            // Verify the update was persisted by querying again
+            const verifyState = await LegacyConversationState.findOne({ phone, isActive: true });
+            console.log(`🔍 Verification query result for ${phone}:`, {
+                currentStep: verifyState.currentStep,
+                selectedCategory: verifyState.conversationData?.selectedCategory,
+                hasCategory: !!verifyState.conversationData?.selectedCategory?.id
+            });
             return state;
         } catch (error) {
-            console.error('Error updating conversation state:', error);
+            console.error('❌ Error updating conversation state:', error);
             throw error;
         }
     }

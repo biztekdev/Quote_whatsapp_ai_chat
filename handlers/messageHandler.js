@@ -269,14 +269,17 @@ class MessageHandler {
                 return;
             }
 
-            // Check if user wants to start a new quote
+            // Check if user wants to start a new quote OR is greeting (regardless of current step)
             const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
             const wantsNewQuote = newQuoteKeywords.some(keyword => 
                 messageText.toLowerCase().includes(keyword.toLowerCase())
             );
 
-            if (wantsNewQuote) {
-                console.log("User wants new quote, resetting conversation");
+            // Check if this is a greeting message
+            const isGreetingMessage = this.isGreeting(messageText);
+
+            if (wantsNewQuote || isGreetingMessage) {
+                console.log("User wants new quote or is greeting, resetting conversation");
                 
                 // Reset conversation to start fresh
                 await conversationService.resetConversation(from);
@@ -322,10 +325,17 @@ class MessageHandler {
             }
 
             // Extract and update conversation data with entities
-            const updatedConversationData = await this.extractAndUpdateConversationData(
-                witResponse.data.entities,
-                conversationState.conversationData || {}
-            );
+            // Skip entity extraction if we're in greeting_response or quote_generation step to prevent "Yes"/"No" from being processed as dimensions
+            let updatedConversationData = conversationState.conversationData || {};
+            if (conversationState.currentStep !== 'greeting_response' && conversationState.currentStep !== 'quote_generation') {
+                updatedConversationData = await this.extractAndUpdateConversationData(
+                    witResponse.data.entities,
+                    conversationState.conversationData || {},
+                    messageText
+                );
+            } else {
+                console.log("🎯 Skipping entity extraction for response step:", conversationState.currentStep, "message:", messageText);
+            }
 
 
             // Special case: If this is the first message and we have selectedCategory, bypass greeting
@@ -426,8 +436,14 @@ class MessageHandler {
     /**
      * Extract entities from Wit.ai response and update conversation data
      */
-    async extractAndUpdateConversationData(entities, currentConversationData) {
+    async extractAndUpdateConversationData(entities, currentConversationData, messageText = '') {
         try {
+            // Skip entity processing if this is a greeting message
+            if (messageText && this.isGreeting(messageText)) {
+                console.log("🎯 Skipping entity extraction for greeting message:", messageText);
+                return currentConversationData;
+            }
+
             const updatedData = { ...currentConversationData };
             console.log("Processing entities:", entities);
 
@@ -881,10 +897,10 @@ class MessageHandler {
     shouldBypassStep(step, conversationData) {
         switch (step) {
             case 'category_selection':
-                return conversationData.selectedCategory || conversationData.requestedCategory;
+                return (conversationData.selectedCategory && conversationData.selectedCategory.id) || conversationData.requestedCategory;
 
             case 'product_selection':
-                return conversationData.selectedProduct || conversationData.requestedProductName;
+                return (conversationData.selectedProduct && conversationData.selectedProduct.id) || conversationData.requestedProductName;
 
             case 'dimension_input':
                 return conversationData.dimensions && conversationData.dimensions.length > 0;
@@ -1195,6 +1211,11 @@ Would you like to get a quote for mylar bags today?`;
                 return;
             }
 
+            // Ensure we're in category_selection step before sending the list
+            await conversationService.updateConversationState(from, {
+                currentStep: 'category_selection'
+            });
+
             const sections = [{
                 title: "Product Categories",
                 rows: categories.map(category => ({
@@ -1260,7 +1281,7 @@ Would you like to get a quote for mylar bags today?`;
                 description: selectedCategory.description
             });
             
-            const updateResult = await conversationService.updateConversationState(from, {
+            const updatePayload = {
                 currentStep: 'product_selection',
                 'conversationData.selectedCategory': {
                     id: selectedCategory._id,
@@ -1268,15 +1289,65 @@ Would you like to get a quote for mylar bags today?`;
                     name: selectedCategory.name,
                     description: selectedCategory.description
                 }
-            });
+            };
+            console.log('📤 Update payload:', JSON.stringify(updatePayload, null, 2));
             
-            console.log('🔄 Update result:', {
-                currentStep: updateResult.currentStep,
-                selectedCategory: updateResult.conversationData?.selectedCategory
-            });
+            try {
+                const updatedState = await conversationService.updateConversationState(from, updatePayload);
+                console.log('📥 Update response received:', {
+                    success: !!updatedState,
+                    currentStep: updatedState?.currentStep,
+                    selectedCategory: updatedState?.conversationData?.selectedCategory,
+                    hasCategory: !!updatedState?.conversationData?.selectedCategory?.id,
+                    fullState: JSON.stringify(updatedState, null, 2)
+                });
 
-            console.log('📤 Sending product selection for category:', selectedCategory.name);
-            await this.sendProductSelection(from);
+                // Verify the update was successful by reading back the state
+                const verificationState = await conversationService.getConversationState(from);
+                console.log('� Verification - state after update:', {
+                    currentStep: verificationState?.currentStep,
+                    selectedCategory: verificationState?.conversationData?.selectedCategory,
+                    hasCategory: !!verificationState?.conversationData?.selectedCategory?.id,
+                    categoryId: verificationState?.conversationData?.selectedCategory?.id,
+                    categoryName: verificationState?.conversationData?.selectedCategory?.name
+                });
+
+                if (!verificationState?.conversationData?.selectedCategory?.id) {
+                    console.error('❌ CRITICAL: Category update failed to persist in database!');
+                    await mongoLogger.logError(new Error('Category selection failed to persist'), {
+                        source: 'category-selection-persistence',
+                        from: from,
+                        selectedCategory: selectedCategory,
+                        updatePayload: updatePayload,
+                        updatedState: updatedState,
+                        verificationState: verificationState
+                    });
+                    
+                    // Retry the update
+                    console.log('🔄 Retrying category update...');
+                    const retryState = await conversationService.updateConversationState(from, updatePayload);
+                    console.log('🔄 Retry result:', retryState);
+                } else {
+                    console.log('✅ Category successfully persisted in database');
+                }
+
+                console.log('�📤 Sending product selection for category:', selectedCategory.name);
+                await this.sendProductSelection(from);
+            } catch (updateError) {
+                console.error('❌ Error updating conversation state with category:', updateError);
+                await mongoLogger.logError(updateError, {
+                    source: 'category-selection-update',
+                    from: from,
+                    selectedCategory: selectedCategory,
+                    updatePayload: updatePayload
+                });
+                
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I encountered an error saving your category selection. Please try again."
+                );
+                return;
+            }
         } else {
             console.log('❌ No category found for:', messageText);
             await this.whatsappService.sendMessage(
@@ -1287,19 +1358,36 @@ Would you like to get a quote for mylar bags today?`;
     }
 
     async sendProductSelection(from, messageId = null) {
-        // try {
-        // Get conversation state to access selected category
-        const conversationState = await conversationService.getConversationState(from);
-        const selectedCategory = conversationState.conversationData?.selectedCategory;
-        console.log('Selected category ', selectedCategory);
+        try {
+            // Get conversation state to access selected category
+            const conversationState = await conversationService.getConversationState(from);
+            console.log('📋 sendProductSelection - Current conversation state:', {
+                from: from,
+                currentStep: conversationState?.currentStep,
+                selectedCategory: conversationState?.conversationData?.selectedCategory,
+                hasCategory: !!conversationState?.conversationData?.selectedCategory?.id,
+                categoryId: conversationState?.conversationData?.selectedCategory?.id,
+                categoryName: conversationState?.conversationData?.selectedCategory?.name,
+                fullConversationData: JSON.stringify(conversationState?.conversationData, null, 2)
+            });
 
-        if (!selectedCategory || !selectedCategory.id) {
-            await this.whatsappService.sendMessage(
-                from,
-                "Sorry, I couldn't find the selected category. Please start over by selecting a category."
-            );
-            return;
-        }
+            const selectedCategory = conversationState.conversationData?.selectedCategory;
+            console.log('Selected category ', selectedCategory);
+
+            if (!selectedCategory || !selectedCategory.id) {
+                console.error('❌ CRITICAL: No selected category found in sendProductSelection!');
+                await mongoLogger.logError(new Error('No selected category in sendProductSelection'), {
+                    source: 'send-product-selection',
+                    from: from,
+                    conversationState: conversationState
+                });
+                
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+                );
+                return;
+            }
 
         // Get products by category ID to validate against
         const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
@@ -1352,16 +1440,22 @@ Would you like to get a quote for mylar bags today?`;
         } else {
             await this.sendMessageFallback(from, bodyText);
         }
-        // } catch (error) {
-        //     await mongoLogger.logError(error, { source: 'send-product-selection' });
-        //     await this.whatsappService.sendMessage(
-        //         from,
-        //         "Sorry, I encountered an error loading products. Please try again later."
-        //     );
-        // }
+    } catch (error) {
+        console.error('Error in sendProductSelection:', error);
+        await mongoLogger.logError(error, {
+            source: 'send-product-selection',
+            from: from,
+            selectedCategory: selectedCategory
+        });
+        
+        await this.whatsappService.sendMessage(
+            from,
+            "Sorry, I encountered an error while preparing the product selection. Please try again."
+        );
     }
+}
 
-    async handleProductSelection(messageText, from) {
+async handleProductSelection(messageText, from) {
         try {
             // Get conversation state to access selected category
             const conversationState = await conversationService.getConversationState(from);
@@ -1478,11 +1572,18 @@ Would you like to get a quote for mylar bags today?`;
 
             // Check if we have a selected product
             if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
-                console.log("No selected product, asking for product selection");
+                console.log("No selected product, checking conversation state:", {
+                    hasCategory: !!conversationData.selectedCategory?.id,
+                    selectedCategory: conversationData.selectedCategory,
+                    messageText: messageText
+                });
 
                 // Check if we have a selected category
                 if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
                     console.log("No selected category, asking for category selection");
+                    await conversationService.updateConversationState(from, {
+                        currentStep: 'category_selection'
+                    });
                     await this.sendCategorySelection(from);
                     return;
                 } else {
@@ -1503,7 +1604,7 @@ Would you like to get a quote for mylar bags today?`;
                     console.log("Found dimensions in Wit.ai response, processing...");
                     
                     // Extract and update conversation data with dimensions
-                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData);
+                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData, messageText);
                     
                     if (updatedData.dimensions && updatedData.dimensions.length > 0) {
                         console.log("Successfully extracted dimensions:", updatedData.dimensions);
@@ -2102,6 +2203,7 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                             if (pricing && !pricing.error) {
                                 // Store pricing in conversation data
                                 await conversationService.updateConversationState(from, {
+                                   
                                     'conversationData.pricingData': pricing,
                                     'conversationData.pricing_done': true
                                 });
@@ -2186,7 +2288,7 @@ Have a great day! 🌟`;
     }
 
     async getPricingForQuote(conversationData) {
-        // try {
+        try {
             console.log("getPricingForQuote - conversationData:", JSON.stringify(conversationData, null, 2));
             
             // Prepare the payload for the pricing API
@@ -2240,20 +2342,20 @@ Have a great day! 🌟`;
 
             return pricingData;
 
-        // } catch (error) {
-        //     console.error('Error getting pricing for quote:', error);
-        //     await mongoLogger.logError(error, {
-        //         source: 'pricing-api-call',
-        //         conversationData: conversationData
-        //     });
+        } catch (error) {
+            console.error('Error getting pricing for quote:', error);
+            await mongoLogger.logError(error, {
+                source: 'pricing-api-call',
+                conversationData: conversationData
+            });
             
-        //     // Return a default pricing structure or null
-        //     return {
-        //         error: true,
-        //         message: 'Failed to get pricing information',
-        //         details: error.message
-        //     };
-        // }
+            // Return a default pricing structure or null
+            return {
+                error: true,
+                message: 'Failed to get pricing information',
+                details: error.message
+            };
+        }
     }
 
     async sendPricingTable(from, conversationData, pricingData, messageId = null) {
@@ -2695,9 +2797,9 @@ Would you like to:`;
 
     // Helper methods
     isGreeting(message) {
-        const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
-        const lowerMessage = message.toLowerCase();
-        return greetings.some(greeting => lowerMessage.includes(greeting));
+        const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'hi there', 'hello there', 'hey there', 'howdy', 'hiya', 'sup', 'yo'];
+        const lowerMessage = message.toLowerCase().trim();
+        return greetings.some(greeting => lowerMessage.includes(greeting)) || lowerMessage === 'hi' || lowerMessage === 'hello' || lowerMessage === 'hey';
     }
 
     async parseDimensionsManually(dimensionString, dimensionNames) {
@@ -2912,16 +3014,30 @@ Would you like to:`;
                 parsedId: parseInt(listId)
             });
 
-            // Check if this is a category selection
-            const categories = await conversationService.getProductCategories();
-            const isCategorySelection = categories && categories.some(cat => cat.erp_id.toString() === listId);
-            
-            if (isCategorySelection) {
-                console.log('🎯 List reply is category selection, routing to handleCategorySelection');
-                await this.handleCategorySelection(listId, from);
+            // Smart routing: Determine what type of selection this is based on the listId
+            const routingResult = await this.determineListReplyRouting(listId, listTitle, conversationState);
+            console.log('🎯 List reply routing result:', routingResult);
+
+            if (routingResult.shouldOverrideStep) {
+                console.log('🔄 Overriding step from', conversationState.currentStep, 'to', routingResult.correctStep);
+                // Override the current step and process with the correct handler
+                await conversationService.updateConversationState(from, {
+                    currentStep: routingResult.correctStep
+                });
+
+                // Get updated state
+                const updatedState = await conversationService.getConversationState(from);
+                console.log('🔄 Updated state after step override:', {
+                    currentStep: updatedState.currentStep,
+                    selectedCategory: updatedState.conversationData?.selectedCategory,
+                    hasCategory: !!updatedState.conversationData?.selectedCategory?.id
+                });
+
+                // Process with the correct step
+                await this.processConversationFlow(message, listId, from, updatedState);
             } else {
-                console.log('🔄 List reply is not category selection, processing through conversation flow');
-                // Process the list selection as a regular text message
+                console.log('➡️ Processing with current step:', conversationState.currentStep);
+                // Process normally with current step
                 await this.processConversationFlow(message, listId, from, conversationState);
             }
         }
@@ -2944,6 +3060,132 @@ Sunday: Closed
 Feel free to reach out anytime!`;
 
         await this.whatsappService.sendMessage(from, contactMessage);
+    }
+
+    /**
+     * Determine the correct routing for a list reply based on its content and current state
+     */
+    async determineListReplyRouting(listId, listTitle, conversationState) {
+        const currentStep = conversationState.currentStep;
+        const conversationData = conversationState.conversationData || {};
+
+        console.log('🔍 Determining list reply routing:', {
+            listId,
+            listTitle,
+            currentStep,
+            hasCategory: !!conversationData.selectedCategory?.id,
+            hasProduct: !!conversationData.selectedProduct?.id
+        });
+
+        // If listId is numeric, it could be a category ERP ID
+        if (!isNaN(parseInt(listId))) {
+            const numericId = parseInt(listId);
+
+            // Check if this matches a category ERP ID
+            try {
+                const categories = await conversationService.getProductCategories();
+                const matchingCategory = categories.find(cat => cat.erp_id === numericId);
+
+                if (matchingCategory) {
+                    console.log('✅ List reply matches category:', matchingCategory.name);
+
+                    // If we're not in category selection and don't have a category, this should be treated as category selection
+                    if (currentStep !== 'category_selection' && !conversationData.selectedCategory?.id) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'category_selection',
+                            reason: 'List reply matches category but current step is not category_selection'
+                        };
+                    }
+
+                    // If we already have a category but this is a different one, treat it as category selection
+                    if (conversationData.selectedCategory?.erp_id && conversationData.selectedCategory.erp_id !== numericId) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'category_selection',
+                            reason: 'List reply matches different category than currently selected'
+                        };
+                    }
+                }
+            } catch (error) {
+                console.log('Error checking categories:', error.message);
+            }
+        }
+
+        // Check if listId could be a product name or ID
+        if (conversationData.selectedCategory?.id) {
+            try {
+                const products = await conversationService.getProductsByCategory(conversationData.selectedCategory.id);
+                const matchingProduct = products.find(prod =>
+                    prod.erp_id.toString() === listId ||
+                    prod.name.toLowerCase().includes(listTitle.toLowerCase())
+                );
+
+                if (matchingProduct) {
+                    console.log('✅ List reply matches product:', matchingProduct.name);
+
+                    // If we're not in product selection and don't have a product, this should be treated as product selection
+                    if (currentStep !== 'product_selection' && !conversationData.selectedProduct?.id) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'product_selection',
+                            reason: 'List reply matches product but current step is not product_selection'
+                        };
+                    }
+                }
+            } catch (error) {
+                console.log('Error checking products:', error.message);
+            }
+        }
+
+        // Check for corrupted state: user in dimension_input but no category/product selected
+        if (currentStep === 'dimension_input' && !conversationData.selectedCategory?.id && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in dimension_input but no category/product selected');
+
+            // Try to determine if this is actually a category selection
+            if (!isNaN(parseInt(listId))) {
+                return {
+                    shouldOverrideStep: true,
+                    correctStep: 'category_selection',
+                    reason: 'Corrupted state: user in dimension_input with no selections, treating as category selection'
+                };
+            }
+        }
+
+        // Check for other corrupted states
+        if (currentStep === 'material_selection' && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in material_selection but no product selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'product_selection',
+                reason: 'Corrupted state: user in material_selection with no product selected'
+            };
+        }
+
+        if (currentStep === 'finish_selection' && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in finish_selection but no product selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'product_selection',
+                reason: 'Corrupted state: user in finish_selection with no product selected'
+            };
+        }
+
+        if (currentStep === 'quantity_input' && !conversationData.selectedFinish?.length) {
+            console.log('🚨 Corrupted state detected: in quantity_input but no finishes selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'finish_selection',
+                reason: 'Corrupted state: user in quantity_input with no finishes selected'
+            };
+        }
+
+        // Default: don't override, process with current step
+        return {
+            shouldOverrideStep: false,
+            correctStep: currentStep,
+            reason: 'No override needed, processing with current step'
+        };
     }
 }
 
