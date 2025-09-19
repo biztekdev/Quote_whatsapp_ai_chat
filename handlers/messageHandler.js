@@ -277,9 +277,14 @@ class MessageHandler {
 
             // Check if this is a greeting message
             const isGreetingMessage = this.isGreeting(messageText);
+            
+            // Check if message contains useful product information
+            const hasProductInfo = this.hasProductInformation(messageText);
 
-            if (wantsNewQuote || isGreetingMessage) {
-                console.log("User wants new quote or is greeting, resetting conversation");
+            // Only reset conversation for simple greetings or explicit new quote requests
+            // Don't reset for complex messages with product information
+            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo)) {
+                console.log("User wants new quote or is simple greeting, resetting conversation");
                 
                 // Reset conversation to start fresh
                 await conversationService.resetConversation(from);
@@ -287,6 +292,16 @@ class MessageHandler {
                 // Send greeting response for new conversation
                 await this.handleGreetingResponse(messageText, from, message.id);
                 return;
+            }
+            
+            // If it's a complex message with product info, process it normally
+            if (hasProductInfo) {
+                console.log("Complex message with product information detected, processing normally");
+                console.log("🔍 Message contains product info:", {
+                    message: messageText,
+                    hasProductInfo: hasProductInfo,
+                    isGreeting: isGreetingMessage
+                });
             }
 
             // Use the existing conversation state instead of redeclaring
@@ -2828,7 +2843,60 @@ Would you like to:`;
     isGreeting(message) {
         const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'hi there', 'hello there', 'hey there', 'howdy', 'hiya', 'sup', 'yo'];
         const lowerMessage = message.toLowerCase().trim();
-        return greetings.some(greeting => lowerMessage.includes(greeting)) || lowerMessage === 'hi' || lowerMessage === 'hello' || lowerMessage === 'hey';
+        
+        // Check for exact matches first
+        if (lowerMessage === 'hi' || lowerMessage === 'hello' || lowerMessage === 'hey') {
+            return true;
+        }
+        
+        // Check for simple greetings (not complex messages with product info)
+        const isSimpleGreeting = greetings.some(greeting => {
+            if (greeting.length <= 3) {
+                // For short greetings, require exact word match
+                return lowerMessage === greeting;
+            } else {
+                // For longer greetings, allow partial match but not in the middle of words
+                return lowerMessage.includes(greeting);
+            }
+        });
+        
+        // If it's a simple greeting, return true
+        if (isSimpleGreeting) {
+            return true;
+        }
+        
+        // If the message contains product-related keywords, it's not a simple greeting
+        const productKeywords = ['looking for', 'need', 'want', 'quote', 'price', 'pouches', 'boxes', 'labels', 'carton', 'quantity', 'size', 'flavors', 'uv', 'foil', 'white', 'inside'];
+        const hasProductInfo = productKeywords.some(keyword => lowerMessage.includes(keyword));
+        
+        // If it has product info, it's not a simple greeting
+        if (hasProductInfo) {
+            return false;
+        }
+        
+        return false;
+    }
+
+    hasProductInformation(message) {
+        const lowerMessage = message.toLowerCase().trim();
+        
+        // Check for product-related keywords that indicate useful information
+        const productKeywords = [
+            'looking for', 'need', 'want', 'quote', 'price', 'pouches', 'boxes', 'labels', 'carton',
+            'quantity', 'size', 'flavors', 'uv', 'foil', 'white', 'inside', 'standup', 'folding',
+            'rigid', 'mylor', 'bag', 'label', 'dimensions', 'width', 'height', 'length', 'thickness',
+            'material', 'finish', 'coating', 'printing', 'colors', 'design', 'custom', 'specifications'
+        ];
+        
+        const hasProductInfo = productKeywords.some(keyword => lowerMessage.includes(keyword));
+        
+        // Also check for numbers (quantities, dimensions)
+        const hasNumbers = /\d+/.test(message);
+        
+        // Check for measurement units
+        const hasUnits = /(mm|cm|inches?|ft|feet|meters?|kg|g|lb|pounds?|pieces?|units?|pcs)/i.test(message);
+        
+        return hasProductInfo || (hasNumbers && hasUnits);
     }
 
     async parseDimensionsManually(dimensionString, dimensionNames) {
