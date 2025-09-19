@@ -59,6 +59,8 @@ class ConversationService {
      */
     async updateConversationState(phone, updates) {
         try {
+            console.log(`🔄 Updating conversation state for ${phone}:`, JSON.stringify(updates, null, 2));
+            
             const state = await LegacyConversationState.findOneAndUpdate(
                 { phone, isActive: true },
                 { 
@@ -68,10 +70,24 @@ class ConversationService {
                 { new: true, upsert: true }
             );
 
-            console.log(`🔄 Conversation state updated for ${phone}: ${state.currentStep}`);
+            console.log(`✅ Conversation state updated successfully for ${phone}:`, {
+                currentStep: state.currentStep,
+                selectedCategory: state.conversationData?.selectedCategory,
+                hasCategory: !!state.conversationData?.selectedCategory?.id,
+                fullConversationData: Object.keys(state.conversationData || {})
+            });
+            
+            // Verify the update was persisted by querying again
+            const verifyState = await LegacyConversationState.findOne({ phone, isActive: true });
+            console.log(`🔍 Verification query result for ${phone}:`, {
+                currentStep: verifyState.currentStep,
+                selectedCategory: verifyState.conversationData?.selectedCategory,
+                hasCategory: !!verifyState.conversationData?.selectedCategory?.id
+            });
+            
             return state;
         } catch (error) {
-            console.error('Error updating conversation state:', error);
+            console.error('❌ Error updating conversation state:', error);
             throw error;
         }
     }

@@ -897,10 +897,10 @@ class MessageHandler {
     shouldBypassStep(step, conversationData) {
         switch (step) {
             case 'category_selection':
-                return conversationData.selectedCategory || conversationData.requestedCategory;
+                return (conversationData.selectedCategory && conversationData.selectedCategory.id) || conversationData.requestedCategory;
 
             case 'product_selection':
-                return conversationData.selectedProduct || conversationData.requestedProductName;
+                return (conversationData.selectedProduct && conversationData.selectedProduct.id) || conversationData.requestedProductName;
 
             case 'dimension_input':
                 return conversationData.dimensions && conversationData.dimensions.length > 0;
@@ -1211,6 +1211,11 @@ Would you like to get a quote for mylar bags today?`;
                 return;
             }
 
+            // Ensure we're in category_selection step before sending the list
+            await conversationService.updateConversationState(from, {
+                currentStep: 'category_selection'
+            });
+
             const sections = [{
                 title: "Product Categories",
                 rows: categories.map(category => ({
@@ -1270,7 +1275,7 @@ Would you like to get a quote for mylar bags today?`;
 
         if (selectedCategory) {
             console.log('✅ Updating conversation state with selected category');
-            await conversationService.updateConversationState(from, {
+            const updatePayload = {
                 currentStep: 'product_selection',
                 'conversationData.selectedCategory': {
                     id: selectedCategory._id,
@@ -1278,10 +1283,65 @@ Would you like to get a quote for mylar bags today?`;
                     name: selectedCategory.name,
                     description: selectedCategory.description
                 }
-            });
+            };
+            console.log('📤 Update payload:', JSON.stringify(updatePayload, null, 2));
+            
+            try {
+                const updatedState = await conversationService.updateConversationState(from, updatePayload);
+                console.log('📥 Update response received:', {
+                    success: !!updatedState,
+                    currentStep: updatedState?.currentStep,
+                    selectedCategory: updatedState?.conversationData?.selectedCategory,
+                    hasCategory: !!updatedState?.conversationData?.selectedCategory?.id,
+                    fullState: JSON.stringify(updatedState, null, 2)
+                });
 
-            console.log('📤 Sending product selection for category:', selectedCategory.name);
-            await this.sendProductSelection(from);
+                // Verify the update was successful by reading back the state
+                const verificationState = await conversationService.getConversationState(from);
+                console.log('� Verification - state after update:', {
+                    currentStep: verificationState?.currentStep,
+                    selectedCategory: verificationState?.conversationData?.selectedCategory,
+                    hasCategory: !!verificationState?.conversationData?.selectedCategory?.id,
+                    categoryId: verificationState?.conversationData?.selectedCategory?.id,
+                    categoryName: verificationState?.conversationData?.selectedCategory?.name
+                });
+
+                if (!verificationState?.conversationData?.selectedCategory?.id) {
+                    console.error('❌ CRITICAL: Category update failed to persist in database!');
+                    await mongoLogger.logError(new Error('Category selection failed to persist'), {
+                        source: 'category-selection-persistence',
+                        from: from,
+                        selectedCategory: selectedCategory,
+                        updatePayload: updatePayload,
+                        updatedState: updatedState,
+                        verificationState: verificationState
+                    });
+                    
+                    // Retry the update
+                    console.log('🔄 Retrying category update...');
+                    const retryState = await conversationService.updateConversationState(from, updatePayload);
+                    console.log('🔄 Retry result:', retryState);
+                } else {
+                    console.log('✅ Category successfully persisted in database');
+                }
+
+                console.log('�📤 Sending product selection for category:', selectedCategory.name);
+                await this.sendProductSelection(from);
+            } catch (updateError) {
+                console.error('❌ Error updating conversation state with category:', updateError);
+                await mongoLogger.logError(updateError, {
+                    source: 'category-selection-update',
+                    from: from,
+                    selectedCategory: selectedCategory,
+                    updatePayload: updatePayload
+                });
+                
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I encountered an error saving your category selection. Please try again."
+                );
+                return;
+            }
         } else {
             console.log('❌ No category found for:', messageText);
             await this.whatsappService.sendMessage(
@@ -1292,19 +1352,36 @@ Would you like to get a quote for mylar bags today?`;
     }
 
     async sendProductSelection(from, messageId = null) {
-        // try {
-        // Get conversation state to access selected category
-        const conversationState = await conversationService.getConversationState(from);
-        const selectedCategory = conversationState.conversationData?.selectedCategory;
-        console.log('Selected category ', selectedCategory);
+        try {
+            // Get conversation state to access selected category
+            const conversationState = await conversationService.getConversationState(from);
+            console.log('📋 sendProductSelection - Current conversation state:', {
+                from: from,
+                currentStep: conversationState?.currentStep,
+                selectedCategory: conversationState?.conversationData?.selectedCategory,
+                hasCategory: !!conversationState?.conversationData?.selectedCategory?.id,
+                categoryId: conversationState?.conversationData?.selectedCategory?.id,
+                categoryName: conversationState?.conversationData?.selectedCategory?.name,
+                fullConversationData: JSON.stringify(conversationState?.conversationData, null, 2)
+            });
 
-        if (!selectedCategory || !selectedCategory.id) {
-            await this.whatsappService.sendMessage(
-                from,
-                "Sorry, I couldn't find the selected category. Please start over by selecting a category."
-            );
-            return;
-        }
+            const selectedCategory = conversationState.conversationData?.selectedCategory;
+            console.log('Selected category ', selectedCategory);
+
+            if (!selectedCategory || !selectedCategory.id) {
+                console.error('❌ CRITICAL: No selected category found in sendProductSelection!');
+                await mongoLogger.logError(new Error('No selected category in sendProductSelection'), {
+                    source: 'send-product-selection',
+                    from: from,
+                    conversationState: conversationState
+                });
+                
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, I couldn't find the selected category. Please start over by selecting a category."
+                );
+                return;
+            }
 
         // Get products by category ID to validate against
         const allProducts = await conversationService.getProductsByCategory(selectedCategory.id);
@@ -1357,16 +1434,22 @@ Would you like to get a quote for mylar bags today?`;
         } else {
             await this.sendMessageFallback(from, bodyText);
         }
-        // } catch (error) {
-        //     await mongoLogger.logError(error, { source: 'send-product-selection' });
-        //     await this.whatsappService.sendMessage(
-        //         from,
-        //         "Sorry, I encountered an error loading products. Please try again later."
-        //     );
-        // }
+    } catch (error) {
+        console.error('Error in sendProductSelection:', error);
+        await mongoLogger.logError(error, {
+            source: 'send-product-selection',
+            from: from,
+            selectedCategory: selectedCategory
+        });
+        
+        await this.whatsappService.sendMessage(
+            from,
+            "Sorry, I encountered an error while preparing the product selection. Please try again."
+        );
     }
+}
 
-    async handleProductSelection(messageText, from) {
+async handleProductSelection(messageText, from) {
         try {
             // Get conversation state to access selected category
             const conversationState = await conversationService.getConversationState(from);
@@ -1492,6 +1575,9 @@ Would you like to get a quote for mylar bags today?`;
                 // Check if we have a selected category
                 if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
                     console.log("No selected category, asking for category selection");
+                    await conversationService.updateConversationState(from, {
+                        currentStep: 'category_selection'
+                    });
                     await this.sendCategorySelection(from);
                     return;
                 } else {
@@ -2111,6 +2197,7 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                             if (pricing && !pricing.error) {
                                 // Store pricing in conversation data
                                 await conversationService.updateConversationState(from, {
+                                   
                                     'conversationData.pricingData': pricing,
                                     'conversationData.pricing_done': true
                                 });
@@ -2195,7 +2282,7 @@ Have a great day! 🌟`;
     }
 
     async getPricingForQuote(conversationData) {
-        // try {
+        try {
             console.log("getPricingForQuote - conversationData:", JSON.stringify(conversationData, null, 2));
             
             // Prepare the payload for the pricing API
@@ -2249,20 +2336,20 @@ Have a great day! 🌟`;
 
             return pricingData;
 
-        // } catch (error) {
-        //     console.error('Error getting pricing for quote:', error);
-        //     await mongoLogger.logError(error, {
-        //         source: 'pricing-api-call',
-        //         conversationData: conversationData
-        //     });
+        } catch (error) {
+            console.error('Error getting pricing for quote:', error);
+            await mongoLogger.logError(error, {
+                source: 'pricing-api-call',
+                conversationData: conversationData
+            });
             
-        //     // Return a default pricing structure or null
-        //     return {
-        //         error: true,
-        //         message: 'Failed to get pricing information',
-        //         details: error.message
-        //     };
-        // }
+            // Return a default pricing structure or null
+            return {
+                error: true,
+                message: 'Failed to get pricing information',
+                details: error.message
+            };
+        }
     }
 
     async sendPricingTable(from, conversationData, pricingData, messageId = null) {
@@ -2926,6 +3013,7 @@ Would you like to:`;
             console.log('🎯 List reply routing result:', routingResult);
 
             if (routingResult.shouldOverrideStep) {
+                console.log('🔄 Overriding step from', conversationState.currentStep, 'to', routingResult.correctStep);
                 // Override the current step and process with the correct handler
                 await conversationService.updateConversationState(from, {
                     currentStep: routingResult.correctStep
@@ -2933,10 +3021,16 @@ Would you like to:`;
 
                 // Get updated state
                 const updatedState = await conversationService.getConversationState(from);
+                console.log('🔄 Updated state after step override:', {
+                    currentStep: updatedState.currentStep,
+                    selectedCategory: updatedState.conversationData?.selectedCategory,
+                    hasCategory: !!updatedState.conversationData?.selectedCategory?.id
+                });
 
                 // Process with the correct step
                 await this.processConversationFlow(message, listId, from, updatedState);
             } else {
+                console.log('➡️ Processing with current step:', conversationState.currentStep);
                 // Process normally with current step
                 await this.processConversationFlow(message, listId, from, conversationState);
             }
