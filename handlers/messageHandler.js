@@ -1467,7 +1467,12 @@ Would you like to get a quote for mylar bags today?`;
 
             // Check if we have a selected product
             if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
-                console.log("No selected product, asking for product selection");
+                console.log("No selected product, checking conversation state:", {
+                    hasCategory: !!conversationData.selectedCategory?.id,
+                    selectedCategory: conversationData.selectedCategory,
+                    currentStep: conversationState.currentStep,
+                    messageText: messageText
+                });
 
                 // Check if we have a selected category
                 if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
@@ -2901,8 +2906,25 @@ Would you like to:`;
                 parsedId: parseInt(listId)
             });
 
-            // Process the list selection as a regular text message
-            await this.processConversationFlow(message, listId, from, conversationState);
+            // Smart routing: Determine what type of selection this is based on the listId
+            const routingResult = await this.determineListReplyRouting(listId, listTitle, conversationState);
+            console.log('🎯 List reply routing result:', routingResult);
+
+            if (routingResult.shouldOverrideStep) {
+                // Override the current step and process with the correct handler
+                await conversationService.updateConversationState(from, {
+                    currentStep: routingResult.correctStep
+                });
+
+                // Get updated state
+                const updatedState = await conversationService.getConversationState(from);
+
+                // Process with the correct step
+                await this.processConversationFlow(message, listId, from, updatedState);
+            } else {
+                // Process normally with current step
+                await this.processConversationFlow(message, listId, from, conversationState);
+            }
         }
     }
 
@@ -2923,6 +2945,132 @@ Sunday: Closed
 Feel free to reach out anytime!`;
 
         await this.whatsappService.sendMessage(from, contactMessage);
+    }
+
+    /**
+     * Determine the correct routing for a list reply based on its content and current state
+     */
+    async determineListReplyRouting(listId, listTitle, conversationState) {
+        const currentStep = conversationState.currentStep;
+        const conversationData = conversationState.conversationData || {};
+
+        console.log('🔍 Determining list reply routing:', {
+            listId,
+            listTitle,
+            currentStep,
+            hasCategory: !!conversationData.selectedCategory?.id,
+            hasProduct: !!conversationData.selectedProduct?.id
+        });
+
+        // If listId is numeric, it could be a category ERP ID
+        if (!isNaN(parseInt(listId))) {
+            const numericId = parseInt(listId);
+
+            // Check if this matches a category ERP ID
+            try {
+                const categories = await conversationService.getProductCategories();
+                const matchingCategory = categories.find(cat => cat.erp_id === numericId);
+
+                if (matchingCategory) {
+                    console.log('✅ List reply matches category:', matchingCategory.name);
+
+                    // If we're not in category selection and don't have a category, this should be treated as category selection
+                    if (currentStep !== 'category_selection' && !conversationData.selectedCategory?.id) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'category_selection',
+                            reason: 'List reply matches category but current step is not category_selection'
+                        };
+                    }
+
+                    // If we already have a category but this is a different one, treat it as category selection
+                    if (conversationData.selectedCategory?.erp_id && conversationData.selectedCategory.erp_id !== numericId) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'category_selection',
+                            reason: 'List reply matches different category than currently selected'
+                        };
+                    }
+                }
+            } catch (error) {
+                console.log('Error checking categories:', error.message);
+            }
+        }
+
+        // Check if listId could be a product name or ID
+        if (conversationData.selectedCategory?.id) {
+            try {
+                const products = await conversationService.getProductsByCategory(conversationData.selectedCategory.id);
+                const matchingProduct = products.find(prod =>
+                    prod.erp_id.toString() === listId ||
+                    prod.name.toLowerCase().includes(listTitle.toLowerCase())
+                );
+
+                if (matchingProduct) {
+                    console.log('✅ List reply matches product:', matchingProduct.name);
+
+                    // If we're not in product selection and don't have a product, this should be treated as product selection
+                    if (currentStep !== 'product_selection' && !conversationData.selectedProduct?.id) {
+                        return {
+                            shouldOverrideStep: true,
+                            correctStep: 'product_selection',
+                            reason: 'List reply matches product but current step is not product_selection'
+                        };
+                    }
+                }
+            } catch (error) {
+                console.log('Error checking products:', error.message);
+            }
+        }
+
+        // Check for corrupted state: user in dimension_input but no category/product selected
+        if (currentStep === 'dimension_input' && !conversationData.selectedCategory?.id && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in dimension_input but no category/product selected');
+
+            // Try to determine if this is actually a category selection
+            if (!isNaN(parseInt(listId))) {
+                return {
+                    shouldOverrideStep: true,
+                    correctStep: 'category_selection',
+                    reason: 'Corrupted state: user in dimension_input with no selections, treating as category selection'
+                };
+            }
+        }
+
+        // Check for other corrupted states
+        if (currentStep === 'material_selection' && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in material_selection but no product selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'product_selection',
+                reason: 'Corrupted state: user in material_selection with no product selected'
+            };
+        }
+
+        if (currentStep === 'finish_selection' && !conversationData.selectedProduct?.id) {
+            console.log('🚨 Corrupted state detected: in finish_selection but no product selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'product_selection',
+                reason: 'Corrupted state: user in finish_selection with no product selected'
+            };
+        }
+
+        if (currentStep === 'quantity_input' && !conversationData.selectedFinish?.length) {
+            console.log('🚨 Corrupted state detected: in quantity_input but no finishes selected');
+            return {
+                shouldOverrideStep: true,
+                correctStep: 'finish_selection',
+                reason: 'Corrupted state: user in quantity_input with no finishes selected'
+            };
+        }
+
+        // Default: don't override, process with current step
+        return {
+            shouldOverrideStep: false,
+            correctStep: currentStep,
+            reason: 'No override needed, processing with current step'
+        };
     }
 }
 
