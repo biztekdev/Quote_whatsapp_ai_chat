@@ -26,7 +26,7 @@ class MessageHandler {
     // Wrapper method to track all message sending attempts
     async trackedSendMessage(to, message, type = 'text') {
         console.log(`🚨 DIRECT MESSAGE SEND DETECTED: ${to} - ${message.substring(0, 50)}...`);
-        console.trace('Call stack for direct message send:');
+        // console.trace('Call stack for direct message send:');
         
         // Try to find messageId from the call stack or context
         // This is a fallback for direct calls that bypass sendMessageOnce
@@ -299,10 +299,10 @@ class MessageHandler {
                 
                 // Log the complete Wit.ai response
                 console.log("📊 Complete Wit.ai Response:", JSON.stringify(witResponse, null, 2));
-                console.log("🎯 Wit.ai Entities:", JSON.stringify(witResponse?.data?.entities || {}, null, 2));
-                console.log("🧠 Wit.ai Intents:", JSON.stringify(witResponse?.data?.intents || [], null, 2));
-                console.log("💬 Wit.ai Text:", witResponse?.data?.text || 'No text');
-                console.log("🎚️ Wit.ai Confidence:", witResponse?.data?.confidence || 'No confidence');
+                // console.log("🎯 Wit.ai Entities:", JSON.stringify(witResponse?.data?.entities || {}, null, 2));
+                // console.log("🧠 Wit.ai Intents:", JSON.stringify(witResponse?.data?.intents || [], null, 2));
+                // console.log("💬 Wit.ai Text:", witResponse?.data?.text || 'No text');
+                // console.log("🎚️ Wit.ai Confidence:", witResponse?.data?.confidence || 'No confidence');
                 
                 witEntities = witResponse?.data?.entities || {};
                 
@@ -450,17 +450,17 @@ class MessageHandler {
 
             // Process each entity type in sorted order
             for (const [entityType, entityArray] of sortedEntityEntries) {
-                console.log(`🔍 Processing entity type: ${entityType}`, JSON.stringify(entityArray, null, 2));
+                // console.log(`🔍 Processing entity type: ${entityType}`, JSON.stringify(entityArray, null, 2));
 
                 for (const entity of entityArray) {
                     try {
                         const { value, confidence, body } = entity;
-                        console.log(`📝 Entity Details - Type: ${entityType}`, { 
-                            value, 
-                            confidence, 
-                            body,
-                            fullEntity: JSON.stringify(entity, null, 2)
-                        });
+                        // console.log(`📝 Entity Details - Type: ${entityType}`, { 
+                        //     value, 
+                        //     confidence, 
+                        //     body,
+                        //     fullEntity: JSON.stringify(entity, null, 2)
+                        // });
 
                         if (confidence > 0.5) {
                             switch (entityType) {
@@ -474,7 +474,7 @@ class MessageHandler {
                                             name: foundCategory.name,
                                             description: foundCategory.description
                                         };
-                                        console.log("Found category:", foundCategory.name);
+                                        // console.log("Found category:", foundCategory.name);
                                     } else {
                                         updatedData.requestedCategory = value || body;
                                         console.log("Category not found, stored as requested:", value || body);
@@ -503,7 +503,7 @@ class MessageHandler {
                                         }
                                     } else {
                                         updatedData.requestedProductName = value || body;
-                                        console.log("Product not found, stored as requested:", value || body);
+                                        // console.log("Product not found, stored as requested:", value || body);
                                     }
                                     break;
 
@@ -535,12 +535,12 @@ class MessageHandler {
                                                                 name: field.name,
                                                                 value: dimensionValues[index]
                                                             });
-                                                            console.log("Added dimension:", field.name, "=", dimensionValues[index]);
+                                                            // console.log("Added dimension:", field.name, "=", dimensionValues[index]);
                                                         }
                                                     }
                                                 });
 
-                                                console.log("Final dimensions array:", updatedData.dimensions);
+                                                // console.log("Final dimensions array:", updatedData.dimensions);
                                             } else {
                                                 console.log("No product dimension fields or no valid dimension values found");
                                             }
@@ -548,7 +548,7 @@ class MessageHandler {
                                             console.error("Error processing dimensions:", error);
                                         }
                                     } else {
-                                        console.log("No selected product found, skipping dimension processing");
+                                        // console.log("No selected product found, skipping dimension processing");
                                     }
                                     break;
                                 case 'finishes:finishes':
@@ -590,8 +590,9 @@ class MessageHandler {
                                     if (!updatedData.quantity) {
                                         updatedData.quantity = [];
                                     }
-                                    // Convert to number for comparison
-                                    const quantityNum = parseInt(quantity);
+                                    // Convert to number for comparison - handle comma-separated numbers
+                                    const cleanQuantity = quantity.toString().replace(/,/g, '');
+                                    const quantityNum = parseInt(cleanQuantity);
                                     if (!isNaN(quantityNum) && !updatedData.quantity.includes(quantityNum)) {
                                         updatedData.quantity.push(quantityNum);
                                     }
@@ -740,7 +741,7 @@ class MessageHandler {
             
             // Search all active materials
             const materials = await Material.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
-            console.log("Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
+            // console.log("Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
             
             // Search in name field (exact match first)
             let foundMaterial = materials.find(material =>
@@ -2082,7 +2083,7 @@ Have a great day! 🌟`;
     }
 
     async getPricingForQuote(conversationData) {
-        try {
+        // try {
             console.log("getPricingForQuote - conversationData:", JSON.stringify(conversationData, null, 2));
             
             // Prepare the payload for the pricing API
@@ -2106,6 +2107,8 @@ Have a great day! 🌟`;
                 dimensions: conversationData.dimensions?.map(dim => dim.value) || []
             };
 
+
+            console.log("payload", payload);
             console.log("Pricing API Payload:", JSON.stringify(payload, null, 2));
 
             // Make API call to get pricing
@@ -2134,20 +2137,20 @@ Have a great day! 🌟`;
 
             return pricingData;
 
-        } catch (error) {
-            console.error('Error getting pricing for quote:', error);
-            await mongoLogger.logError(error, {
-                source: 'pricing-api-call',
-                conversationData: conversationData
-            });
+        // } catch (error) {
+        //     console.error('Error getting pricing for quote:', error);
+        //     await mongoLogger.logError(error, {
+        //         source: 'pricing-api-call',
+        //         conversationData: conversationData
+        //     });
             
-            // Return a default pricing structure or null
-            return {
-                error: true,
-                message: 'Failed to get pricing information',
-                details: error.message
-            };
-        }
+        //     // Return a default pricing structure or null
+        //     return {
+        //         error: true,
+        //         message: 'Failed to get pricing information',
+        //         details: error.message
+        //     };
+        // }
     }
 
     async sendPricingTable(from, conversationData, pricingData, messageId = null) {
