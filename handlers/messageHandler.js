@@ -402,7 +402,7 @@ class MessageHandler {
 
             // Replace common separators with comma and clean the string
             let cleanedString = dimensionString
-                .replace(/[x×]/gi, ',')  // Replace x or × with comma
+                .replace(/[x×*]/gi, ',')  // Replace x, ×, or * with comma
                 .replace(/\s+/g, ',')    // Replace spaces with comma
                 .replace(/[,\s]+/g, ',') // Replace multiple commas/spaces with single comma
                 .replace(/^,|,$/g, '');  // Remove leading/trailing commas
@@ -606,11 +606,27 @@ class MessageHandler {
                                     if (!updatedData.quantity) {
                                         updatedData.quantity = [];
                                     }
-                                    // Convert to number for comparison - handle comma-separated numbers
+                                    // Convert to number for comparison - handle comma-separated numbers and "k" notation
                                     const cleanQuantity = quantity.toString().replace(/,/g, '');
-                                    const quantityNum = parseInt(cleanQuantity);
-                                    if (!isNaN(quantityNum) && !updatedData.quantity.includes(quantityNum)) {
-                                        updatedData.quantity.push(quantityNum);
+                                    
+                                    // Handle "k" notation (e.g., "19k" -> 19000)
+                                    let numericQuantity;
+                                    if (cleanQuantity.toLowerCase().includes('k')) {
+                                        // Extract number before 'k' and multiply by 1000
+                                        const kMatch = cleanQuantity.toLowerCase().match(/(\d+(?:\.\d+)?)k/);
+                                        if (kMatch) {
+                                            numericQuantity = parseFloat(kMatch[1]) * 1000;
+                                            console.log(`Converted "${cleanQuantity}" to ${numericQuantity} (k notation)`);
+                                        } else {
+                                            numericQuantity = parseInt(cleanQuantity);
+                                        }
+                                    } else {
+                                        numericQuantity = parseInt(cleanQuantity);
+                                    }
+                                    
+                                    if (!isNaN(numericQuantity) && !updatedData.quantity.includes(numericQuantity)) {
+                                        updatedData.quantity.push(numericQuantity);
+                                        console.log(`Added quantity: ${numericQuantity} (from "${quantity}")`);
                                     }
                                     break;
                                 case 'skus:skus':
