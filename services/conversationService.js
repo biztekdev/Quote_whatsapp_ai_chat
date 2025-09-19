@@ -59,16 +59,44 @@ class ConversationService {
      */
     async updateConversationState(phone, updates) {
         try {
+            console.log('🔄 Updating conversation state for', phone, 'with updates:', JSON.stringify(updates, null, 2));
+            
+            // Separate dot notation updates from regular updates
+            const regularUpdates = {};
+            const dotNotationUpdates = {};
+            
+            for (const [key, value] of Object.entries(updates)) {
+                if (key.includes('.')) {
+                    dotNotationUpdates[key] = value;
+                } else {
+                    regularUpdates[key] = value;
+                }
+            }
+            
+            console.log('📝 Regular updates:', regularUpdates);
+            console.log('📝 Dot notation updates:', dotNotationUpdates);
+            
+            // Build the update object
+            const updateObj = {
+                ...regularUpdates,
+                lastMessageAt: new Date()
+            };
+            
+            // Add dot notation updates using $set
+            if (Object.keys(dotNotationUpdates).length > 0) {
+                updateObj.$set = dotNotationUpdates;
+            }
+            
+            console.log('📝 Final update object:', JSON.stringify(updateObj, null, 2));
+            
             const state = await LegacyConversationState.findOneAndUpdate(
                 { phone, isActive: true },
-                { 
-                    ...updates, 
-                    lastMessageAt: new Date() 
-                },
+                updateObj,
                 { new: true, upsert: true }
             );
 
             console.log(`🔄 Conversation state updated for ${phone}: ${state.currentStep}`);
+            console.log('📋 Updated conversation data:', JSON.stringify(state.conversationData, null, 2));
             return state;
         } catch (error) {
             console.error('Error updating conversation state:', error);

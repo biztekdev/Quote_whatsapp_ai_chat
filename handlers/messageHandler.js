@@ -1253,8 +1253,14 @@ Would you like to get a quote for mylar bags today?`;
         });
 
         if (selectedCategory) {
-            console.log('✅ Updating conversation state with selected category');
-            await conversationService.updateConversationState(from, {
+            console.log('✅ Updating conversation state with selected category:', {
+                id: selectedCategory._id,
+                erp_id: selectedCategory.erp_id,
+                name: selectedCategory.name,
+                description: selectedCategory.description
+            });
+            
+            const updateResult = await conversationService.updateConversationState(from, {
                 currentStep: 'product_selection',
                 'conversationData.selectedCategory': {
                     id: selectedCategory._id,
@@ -1262,6 +1268,11 @@ Would you like to get a quote for mylar bags today?`;
                     name: selectedCategory.name,
                     description: selectedCategory.description
                 }
+            });
+            
+            console.log('🔄 Update result:', {
+                currentStep: updateResult.currentStep,
+                selectedCategory: updateResult.conversationData?.selectedCategory
             });
 
             console.log('📤 Sending product selection for category:', selectedCategory.name);
@@ -2901,8 +2912,18 @@ Would you like to:`;
                 parsedId: parseInt(listId)
             });
 
-            // Process the list selection as a regular text message
-            await this.processConversationFlow(message, listId, from, conversationState);
+            // Check if this is a category selection
+            const categories = await conversationService.getProductCategories();
+            const isCategorySelection = categories && categories.some(cat => cat.erp_id.toString() === listId);
+            
+            if (isCategorySelection) {
+                console.log('🎯 List reply is category selection, routing to handleCategorySelection');
+                await this.handleCategorySelection(listId, from);
+            } else {
+                console.log('🔄 List reply is not category selection, processing through conversation flow');
+                // Process the list selection as a regular text message
+                await this.processConversationFlow(message, listId, from, conversationState);
+            }
         }
     }
 
