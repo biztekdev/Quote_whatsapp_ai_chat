@@ -269,14 +269,17 @@ class MessageHandler {
                 return;
             }
 
-            // Check if user wants to start a new quote
+            // Check if user wants to start a new quote OR is greeting (regardless of current step)
             const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
             const wantsNewQuote = newQuoteKeywords.some(keyword => 
                 messageText.toLowerCase().includes(keyword.toLowerCase())
             );
 
-            if (wantsNewQuote) {
-                console.log("User wants new quote, resetting conversation");
+            // Check if this is a greeting message
+            const isGreetingMessage = this.isGreeting(messageText);
+
+            if (wantsNewQuote || isGreetingMessage) {
+                console.log("User wants new quote or is greeting, resetting conversation");
                 
                 // Reset conversation to start fresh
                 await conversationService.resetConversation(from);
@@ -324,7 +327,8 @@ class MessageHandler {
             // Extract and update conversation data with entities
             const updatedConversationData = await this.extractAndUpdateConversationData(
                 witResponse.data.entities,
-                conversationState.conversationData || {}
+                conversationState.conversationData || {},
+                messageText
             );
 
 
@@ -426,8 +430,14 @@ class MessageHandler {
     /**
      * Extract entities from Wit.ai response and update conversation data
      */
-    async extractAndUpdateConversationData(entities, currentConversationData) {
+    async extractAndUpdateConversationData(entities, currentConversationData, messageText = '') {
         try {
+            // Skip entity processing if this is a greeting message
+            if (messageText && this.isGreeting(messageText)) {
+                console.log("🎯 Skipping entity extraction for greeting message:", messageText);
+                return currentConversationData;
+            }
+
             const updatedData = { ...currentConversationData };
             console.log("Processing entities:", entities);
 
@@ -1497,7 +1507,7 @@ Would you like to get a quote for mylar bags today?`;
                     console.log("Found dimensions in Wit.ai response, processing...");
                     
                     // Extract and update conversation data with dimensions
-                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData);
+                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData, messageText);
                     
                     if (updatedData.dimensions && updatedData.dimensions.length > 0) {
                         console.log("Successfully extracted dimensions:", updatedData.dimensions);
@@ -2689,9 +2699,9 @@ Would you like to:`;
 
     // Helper methods
     isGreeting(message) {
-        const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
-        const lowerMessage = message.toLowerCase();
-        return greetings.some(greeting => lowerMessage.includes(greeting));
+        const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'hi there', 'hello there', 'hey there', 'howdy', 'hiya', 'sup', 'yo'];
+        const lowerMessage = message.toLowerCase().trim();
+        return greetings.some(greeting => lowerMessage.includes(greeting)) || lowerMessage === 'hi' || lowerMessage === 'hello' || lowerMessage === 'hey';
     }
 
     async parseDimensionsManually(dimensionString, dimensionNames) {
