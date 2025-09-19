@@ -1486,7 +1486,6 @@ Would you like to get a quote for mylar bags today?`;
                 console.log("No selected product, checking conversation state:", {
                     hasCategory: !!conversationData.selectedCategory?.id,
                     selectedCategory: conversationData.selectedCategory,
-                    currentStep: conversationState.currentStep,
                     messageText: messageText
                 });
 
