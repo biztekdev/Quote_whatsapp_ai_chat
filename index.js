@@ -221,17 +221,22 @@ async function processMessagesAsync(webhookData, startTime) {
                         return;
                     }
 
+                    console.log(`📊 [${processingId}] Found ${userMessages.length} user messages to process`);
+                    
                     // Process each user message in the webhook
                     for (let i = 0; i < userMessages.length; i++) {
                         const message = userMessages[i];
                         const messageId = message.id;
                         const from = message.from;
                         const messageType = message.type;
+                        
+                        console.log(`📝 [${processingId}] Message ${i + 1}/${userMessages.length}: ID=${messageId}, From=${from}, Type=${messageType}`);
                         const messageBody = message.text?.body || message.caption || `[${messageType} message]`;
 
                         const messageProcessingId = `${processingId}_msg_${i}`;
 
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
+                        console.log(`🔍 [${messageProcessingId}] Full message data:`, JSON.stringify(message, null, 2));
 
                         // Atomically check if message can be processed and initialize if it can
                         const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(

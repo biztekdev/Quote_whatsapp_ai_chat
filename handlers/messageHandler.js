@@ -169,7 +169,14 @@ class MessageHandler {
             await mongoLogger.info('Processing message type', { messageType });
 
             try {
-                switch (messageType) {
+                // Fix for webhook data sending wrong message type
+                const actualMessageType = messageType === 'hi' ? 'text' : messageType;
+                
+                if (messageType !== actualMessageType) {
+                    console.log(`🔧 Message type correction: ${messageType} → ${actualMessageType}`);
+                }
+                
+                switch (actualMessageType) {
                     case 'text':
                         await this.handleTextMessage(message, from);
                         break;
@@ -269,45 +276,7 @@ class MessageHandler {
                 return;
             }
 
-            // Check if user wants to start a new quote OR is greeting (regardless of current step)
-            const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'begin again', 'fresh quote', 'another quote', 'new order'];
-            const wantsNewQuote = newQuoteKeywords.some(keyword => 
-                messageText.toLowerCase().includes(keyword.toLowerCase())
-            );
-
-            // Check if this is a greeting message
-            const isGreetingMessage = this.isGreeting(messageText);
-            
-            // Check if message contains useful product information
-            const hasProductInfo = this.hasProductInformation(messageText);
-
-            // Only reset conversation for simple greetings or explicit new quote requests
-            // Don't reset for complex messages with product information
-            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo)) {
-                console.log("User wants new quote or is simple greeting, resetting conversation");
-                
-                // Reset conversation to start fresh
-                await conversationService.resetConversation(from);
-                
-                // Send greeting response for new conversation
-                await this.handleGreetingResponse(messageText, from, message.id);
-                return;
-            }
-            
-            // If it's a complex message with product info, process it normally
-            if (hasProductInfo) {
-                console.log("Complex message with product information detected, processing normally");
-                console.log("🔍 Message contains product info:", {
-                    message: messageText,
-                    hasProductInfo: hasProductInfo,
-                    isGreeting: isGreetingMessage
-                });
-            }
-
-            // Use the existing conversation state instead of redeclaring
-            // conversationState is already declared above
-
-            // Process message with Wit.ai first (with error handling)
+            // Process message with Wit.ai FIRST to extract entities before making decisions
             let witResponse = null;
             let witEntities = {};
             
@@ -317,10 +286,6 @@ class MessageHandler {
                 
                 // Log the complete Wit.ai response
                 console.log("📊 Complete Wit.ai Response:", JSON.stringify(witResponse, null, 2));
-                // console.log("🎯 Wit.ai Entities:", JSON.stringify(witResponse?.data?.entities || {}, null, 2));
-                // console.log("🧠 Wit.ai Intents:", JSON.stringify(witResponse?.data?.intents || [], null, 2));
-                // console.log("💬 Wit.ai Text:", witResponse?.data?.text || 'No text');
-                // console.log("🎚️ Wit.ai Confidence:", witResponse?.data?.confidence || 'No confidence');
                 
                 witEntities = witResponse?.data?.entities || {};
                 
@@ -339,15 +304,70 @@ class MessageHandler {
                 witEntities = {};
             }
 
+            // Check if user wants to start a new quote OR is greeting (regardless of current step)
+            const newQuoteKeywords = ['new quote', 'new', 'start over', 'restart', 'reset', 'begin again', 'fresh quote', 'another quote', 'new order'];
+            const wantsNewQuote = newQuoteKeywords.some(keyword => 
+                messageText.toLowerCase().includes(keyword.toLowerCase())
+            );
+
+            // Check if this is a greeting message
+            const isGreetingMessage = this.isGreeting(messageText);
+            
+            // Check if message contains useful product information
+            const hasProductInfo = this.hasProductInformation(messageText);
+            
+            console.log('🔍 Message analysis:', {
+                message: messageText,
+                wantsNewQuote: wantsNewQuote,
+                isGreetingMessage: isGreetingMessage,
+                hasProductInfo: hasProductInfo,
+                hasEntities: Object.keys(witEntities).length > 0
+            });
+
+            // Only reset conversation for simple greetings or explicit new quote requests
+            // Don't reset for complex messages with product information or detected entities
+            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo && Object.keys(witEntities).length === 0)) {
+                console.log("User wants new quote or is simple greeting, resetting conversation");
+                
+                // Reset conversation to start fresh
+                await conversationService.resetConversation(from);
+                
+                // Send greeting response for new conversation
+                await this.handleGreetingResponse(messageText, from, message.id);
+                return;
+            }
+            
+            // If it's a complex message with product info OR entities detected, process it with entity extraction
+            if (hasProductInfo || Object.keys(witEntities).length > 0) {
+                console.log("Complex message with product information or entities detected, processing with entity extraction");
+                
+                // For greeting messages with entities, reset conversation but extract entities first
+                if (isGreetingMessage) {
+                    console.log("Greeting with entities detected, resetting and extracting data");
+                    await conversationService.resetConversation(from);
+                    
+                    // Get fresh conversation state after reset
+                    conversationState = await conversationService.getConversationState(from);
+                }
+            }
+
             // Extract and update conversation data with entities
-            // Skip entity extraction if we're in greeting_response or quote_generation step to prevent "Yes"/"No" from being processed as dimensions
+            // Skip entity extraction for quote_generation, material_selection, and finish_selection to prevent unwanted overrides
+            // Allow entity extraction for greeting_response when it contains product info
             let updatedConversationData = conversationState.conversationData || {};
-            if (conversationState.currentStep !== 'greeting_response' && conversationState.currentStep !== 'quote_generation') {
+            const shouldExtractEntities = conversationState.currentStep !== 'quote_generation' && 
+                                        conversationState.currentStep !== 'material_selection' &&
+                                        conversationState.currentStep !== 'finish_selection' &&
+                                        !(conversationState.currentStep === 'greeting_response' && 
+                                          (messageText.toLowerCase().includes('yes') || messageText.toLowerCase().includes('no')));
+                                          
+            if (shouldExtractEntities) {
                 updatedConversationData = await this.extractAndUpdateConversationData(
                 witResponse.data.entities,
                     conversationState.conversationData || {},
                     messageText
             );
+                console.log("🎯 Entity extraction performed for step:", conversationState.currentStep, "message:", messageText);
             } else {
                 console.log("🎯 Skipping entity extraction for response step:", conversationState.currentStep, "message:", messageText);
             }
@@ -460,9 +480,9 @@ class MessageHandler {
      */
     async extractAndUpdateConversationData(entities, currentConversationData, messageText = '') {
         try {
-            // Skip entity processing if this is a greeting message
-            if (messageText && this.isGreeting(messageText)) {
-                console.log("🎯 Skipping entity extraction for greeting message:", messageText);
+            // Skip entity processing only for simple greetings without product information
+            if (messageText && this.isGreeting(messageText) && !this.hasProductInformation(messageText)) {
+                console.log("🎯 Skipping entity extraction for simple greeting message:", messageText);
                 return currentConversationData;
             }
 
@@ -528,6 +548,11 @@ class MessageHandler {
                                             name: foundCategory.name,
                                             description: foundCategory.description
                                         };
+                                        // If this is a greeting message with category, auto-set wantsQuote to true
+                                        if (messageText && this.isGreeting(messageText)) {
+                                            updatedData.wantsQuote = true;
+                                            console.log("🎯 Auto-setting wantsQuote=true for greeting with category:", foundCategory.name);
+                                        }
                                         // console.log("Found category:", foundCategory.name);
                                     } else {
                                         updatedData.requestedCategory = value || body;
@@ -536,28 +561,38 @@ class MessageHandler {
                                     break;
 
                                 case 'product:product':
-                                    // Search for product in Product schema
-                                    const foundProduct = await this.findProductByName(value || body, updatedData);
-                                    if (foundProduct) {
-                                        updatedData.selectedProduct = {
-                                            id: foundProduct._id.toString(),
-                                            erp_id: foundProduct.erp_id,
-                                            name: foundProduct.name,
-                                            description: foundProduct.description,
-                                            basePrice: foundProduct.basePrice
-                                        };
-                                        const foundCategory = await this.findCategoryById(foundProduct.categoryId);
-                                        if (foundCategory) {
-                                            updatedData.selectedCategory = {
-                                                id: foundCategory._id.toString(),
-                                                erp_id: foundCategory.erp_id,
-                                                name: foundCategory.name,
-                                                description: foundCategory.description
+                                    // Only update product if not already selected (prevent overriding during material/finish selection)
+                                    if (!currentConversationData.selectedProduct || !currentConversationData.selectedProduct.id) {
+                                        // Search for product in Product schema
+                                        const foundProduct = await this.findProductByName(value || body, updatedData);
+                                        if (foundProduct) {
+                                            updatedData.selectedProduct = {
+                                                id: foundProduct._id.toString(),
+                                                erp_id: foundProduct.erp_id,
+                                                name: foundProduct.name,
+                                                description: foundProduct.description,
+                                                basePrice: foundProduct.basePrice
                                             };
+                                            const foundCategory = await this.findCategoryById(foundProduct.categoryId);
+                                            if (foundCategory) {
+                                                updatedData.selectedCategory = {
+                                                    id: foundCategory._id.toString(),
+                                                    erp_id: foundCategory.erp_id,
+                                                    name: foundCategory.name,
+                                                    description: foundCategory.description
+                                                };
+                                            }
+                                            // If this is a greeting message with product, auto-set wantsQuote to true
+                                            if (messageText && this.isGreeting(messageText)) {
+                                                updatedData.wantsQuote = true;
+                                                console.log("🎯 Auto-setting wantsQuote=true for greeting with product:", foundProduct.name);
+                                            }
+                                        } else {
+                                            updatedData.requestedProductName = value || body;
+                                            // console.log("Product not found, stored as requested:", value || body);
                                         }
                                     } else {
-                                        updatedData.requestedProductName = value || body;
-                                        // console.log("Product not found, stored as requested:", value || body);
+                                        console.log("Product already selected, skipping extraction to prevent override:", currentConversationData.selectedProduct.name);
                                     }
                                     break;
 
@@ -626,21 +661,34 @@ class MessageHandler {
                                     break;
                                 case 'material:material':
                                     const material = value || body;
-                                    const findMaterial = await this.findMaterialByName(material);
-                                    if (findMaterial) {
-                                        updatedData.selectedMaterial = {
-                                            _id: findMaterial.erp_id.toString(),
-                                            name: findMaterial.name,
-                                        };
-                                        console.log("Found material:", findMaterial.name);
+                                    
+                                    // Only update material if not already confirmed (prevent overriding during material selection step)
+                                    if (!currentConversationData.selectedMaterial || !currentConversationData.selectedMaterial.name) {
+                                        const findMaterial = await this.findMaterialByName(material);
+                                        if (findMaterial) {
+                                            updatedData.selectedMaterial = {
+                                                _id: findMaterial.erp_id.toString(),
+                                                name: findMaterial.name,
+                                            };
+                                            console.log("Found material:", findMaterial.name);
+                                        } else {
+                                            // Store the requested material even if not found in database
+                                            updatedData.requestedMaterial = material;
+                                            console.log("Material not found in database, storing as requested:", material);
+                                        }
                                     } else {
-                                        // Store the requested material even if not found in database
-                                        updatedData.requestedMaterial = material;
-                                        console.log("Material not found in database, storing as requested:", material);
+                                        console.log("Material already selected, skipping extraction to prevent override:", currentConversationData.selectedMaterial.name);
                                     }
                                     break;
                                 case 'quantities:quantities':
                                     const quantity = value || body;
+                                    
+                                    // Don't extract quantity if this looks like a dimension string
+                                    if (messageText && this.isDimensionMessage(messageText)) {
+                                        console.log("Skipping quantity extraction - detected dimension message:", messageText);
+                                        break;
+                                    }
+                                    
                                     if (!updatedData.quantity) {
                                         updatedData.quantity = [];
                                     }
@@ -918,6 +966,11 @@ class MessageHandler {
      */
     shouldBypassStep(step, conversationData) {
         switch (step) {
+            case 'greeting_response':
+                // Bypass greeting_response if we have category data and user wants a quote
+                return conversationData.wantsQuote && 
+                       ((conversationData.selectedCategory && conversationData.selectedCategory.id) || conversationData.requestedCategory);
+
             case 'category_selection':
                 return (conversationData.selectedCategory && conversationData.selectedCategory.id) || conversationData.requestedCategory;
 
@@ -960,6 +1013,10 @@ class MessageHandler {
 
         // Otherwise, move to the next logical step
         switch (currentStep) {
+            case 'greeting_response':
+                return conversationData.selectedProduct ? 'dimension_input' : 
+                       (conversationData.selectedCategory ? 'product_selection' : 'category_selection');
+
             case 'category_selection':
                 return conversationData.selectedProduct ? 'dimension_input' : 'product_selection';
 
@@ -1006,14 +1063,20 @@ class MessageHandler {
             return 'greeting_response';
         }
 
+        // Special case: If we're in 'greeting_response' and now have selectedCategory, move to product_selection
+        if (currentStep === 'greeting_response' && conversationData.selectedCategory?.id) {
+            console.log('✅ Case 3: greeting_response + has selectedCategory → product_selection');
+            return 'product_selection';
+        }
+
         // Use the bypassing logic to determine next step
         if (this.shouldBypassStep(currentStep, conversationData)) {
             const bypassResult = this.getNextStepAfterBypass(currentStep, conversationData);
-            console.log('✅ Case 3: bypass logic →', bypassResult);
+            console.log('✅ Case 4: bypass logic →', bypassResult);
             return bypassResult;
         }
 
-        console.log('✅ Case 4: no change →', currentStep);
+        console.log('✅ Case 5: no change →', currentStep);
         return currentStep; // Keep current step if no advancement possible
     }
 
@@ -1204,14 +1267,47 @@ Would you like to get a quote for mylar bags today?`;
         const response = messageText.toLowerCase().trim();
         console.log('🎯 handleGreetingResponse called with:', { messageText, response, from });
 
-        if (response.includes('yes') || response === 'quote_yes' || response.includes('get quote')) {
-            console.log('✅ User wants quote, updating state to category_selection');
+        // Check if user is making a specific quote request (e.g., "need folding carton quote")
+        const isQuoteRequest = response.includes('quote') || response.includes('need') || 
+                              response.includes('want') || response.includes('get');
+                              
+        // Check if user mentioned a specific category
+        const hasProductInfo = this.hasProductInformation(messageText);
+
+        if (response.includes('yes') || response === 'quote_yes' || response.includes('get quote') || 
+            (isQuoteRequest && hasProductInfo)) {
+            console.log('✅ User wants quote, updating state to category_selection or proceeding with extracted category');
+            
             await conversationService.updateConversationState(from, {
                 currentStep: 'category_selection',
                 'conversationData.wantsQuote': true
             });
-            console.log('📤 Calling sendCategorySelection');
-            await this.sendCategorySelection(from);
+            
+            // Check if we already have category information from entity extraction
+            const conversationState = await conversationService.getConversationState(from);
+            const selectedCategory = conversationState.conversationData?.selectedCategory;
+            
+            if (selectedCategory && selectedCategory.id) {
+                console.log('📦 Category already identified from message, proceeding to product selection');
+                
+                // Send confirmation that category was detected
+                await this.whatsappService.sendMessage(
+                    from,
+                    `✅ Perfect! I detected you need a quote for **${selectedCategory.name}** products. Let me show you the available options.`
+                );
+                
+                await conversationService.updateConversationState(from, {
+                    currentStep: 'product_selection'
+                });
+                
+                // Small delay to ensure messages appear in order
+                setTimeout(async () => {
+                    await this.sendProductSelection(from);
+                }, 1000);
+            } else {
+                console.log('📤 No category identified, calling sendCategorySelection');
+                await this.sendCategorySelection(from);
+            }
         } else if (response.includes('no') || response === 'quote_no') {
             await this.sendMessageOnce(
                 messageId,
@@ -1447,37 +1543,38 @@ Would you like to get a quote for mylar bags today?`;
         // Get all the information we have so far
         const conversationData = conversationState.conversationData || {};
         
-        // Build acknowledgment message with all collected information
-        let bodyText = `Great! 📦 I've gathered the following information from your request:\n\n`;
+        // Show available products with collected information
+        let bodyText = `Perfect! 🎯 I see you need a quote for **${selectedCategory.name}** products.\n\n`;
         
-        // Category
-        bodyText += `📂 **Category:** ${selectedCategory.name}\n`;
-        
-        // Material (if available)
-        if (conversationData.selectedMaterial && conversationData.selectedMaterial.name) {
-            bodyText += `🧱 **Material:** ${conversationData.selectedMaterial.name}\n`;
-        } else if (conversationData.requestedMaterial) {
-            bodyText += `🧱 **Material:** ${conversationData.requestedMaterial}\n`;
+        // Show collected information if any
+        let hasCollectedInfo = false;
+        if (conversationData.selectedMaterial?.name || conversationData.requestedMaterial) {
+            bodyText += `🧱 **Material:** ${conversationData.selectedMaterial?.name || conversationData.requestedMaterial}\n`;
+            hasCollectedInfo = true;
         }
-        
-        // Quantity (if available)
-        if (conversationData.quantity && conversationData.quantity.length > 0) {
+        if (conversationData.quantity?.length > 0) {
             bodyText += `🔢 **Quantity:** ${conversationData.quantity.join(', ')}\n`;
+            hasCollectedInfo = true;
         }
-        
-        // Dimensions (if available)
-        if (conversationData.dimensions && conversationData.dimensions.length > 0) {
+        if (conversationData.dimensions?.length > 0) {
             const dimensionsText = conversationData.dimensions.map(d => `${d.name}: ${d.value}`).join(', ');
             bodyText += `📏 **Dimensions:** ${dimensionsText}\n`;
+            hasCollectedInfo = true;
         }
-        
-        // Finishes (if available)
-        if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+        if (conversationData.selectedFinish?.length > 0) {
             const finishNames = conversationData.selectedFinish.map(f => f.name).join(', ');
             bodyText += `✨ **Finishes:** ${finishNames}\n`;
+            hasCollectedInfo = true;
         }
         
-        bodyText += `\nWhat is the name of the product you're looking for? Please type the product name and I'll help you find it.`;
+        if (hasCollectedInfo) {
+            bodyText += `\n`;
+        }
+        
+        // Show available products list
+        const productList = allProducts.map((product, index) => `${index + 1}. ${product.name}`).join('\n');
+        
+        bodyText += `Here are the available products in **${selectedCategory.name}**:\n\n${productList}\n\nPlease select a product by:\n• Typing the product name (e.g., "${allProducts[0].name}")\n• Or just the number (e.g., "1" for ${allProducts[0].name})`;
 
         if (messageId) {
             await this.sendMessageOnce(messageId, from, bodyText);
@@ -1520,12 +1617,49 @@ Would you like to get a quote for mylar bags today?`;
 
             // Use requested product name from Wit.ai if available, otherwise use messageText
             const searchTerm = requestedProductName || messageText;
+            
+            console.log('🔍 Product selection search details:', {
+                messageText,
+                requestedProductName,
+                searchTerm,
+                selectedCategory: selectedCategory?.name,
+                hasQuantity: !!conversationState.conversationData?.quantity?.length,
+                quantity: conversationState.conversationData?.quantity
+            });
 
-            // Check if it's a direct product ERP ID or find by name
-            selectedProduct = products.find(p =>
-                p.erp_id.toString() === searchTerm ||
-                p.name.toLowerCase().includes(searchTerm.toLowerCase())
-            );
+            // Check if the message contains quantity information but no specific product name
+            const hasQuantityInfo = conversationState.conversationData?.quantity?.length > 0;
+            const isGenericQuoteRequest = messageText.toLowerCase().includes('quote') && 
+                                        messageText.toLowerCase().includes('qty');
+            
+            if (hasQuantityInfo && isGenericQuoteRequest && !requestedProductName) {
+                console.log('📋 User provided quantity but no specific product, asking for product selection');
+                
+                // Acknowledge the quantity and ask for product selection
+                const quantity = conversationState.conversationData?.quantity?.[0];
+                const quantityText = quantity ? `${quantity.toLocaleString()} pieces` : 'the specified quantity';
+                
+                await this.whatsappService.sendMessage(
+                    from,
+                    `Great! I see you need a quote for ${quantityText}. Now please select a product from the ${selectedCategory.name} category:`
+                );
+                
+                await this.sendProductSelection(from);
+                return;
+            }
+
+            // Check if it's a numeric selection (e.g., "1", "2", etc.)
+            const numericSelection = parseInt(searchTerm);
+            if (!isNaN(numericSelection) && numericSelection > 0 && numericSelection <= products.length) {
+                selectedProduct = products[numericSelection - 1];
+                console.log(`🔢 Selected product by number: ${numericSelection} -> ${selectedProduct.name}`);
+            } else {
+                // Check if it's a direct product ERP ID or find by name
+                selectedProduct = products.find(p =>
+                    p.erp_id.toString() === searchTerm ||
+                    p.name.toLowerCase().includes(searchTerm.toLowerCase())
+                );
+            }
 
             if (selectedProduct) {
                 await conversationService.updateConversationState(from, {
@@ -1552,10 +1686,40 @@ Would you like to get a quote for mylar bags today?`;
                     await this.sendDimensionRequest(from, selectedProduct);
                 }
             } else {
-                await this.whatsappService.sendMessage(
-                    from,
-                    `I couldn't find a product named "${searchTerm}" in the ${selectedCategory.name} category. Please try a different product name or check the spelling.`
+                    // Check if this looks like a quote request rather than a specific product name
+                const isQuoteRequest = messageText.toLowerCase().includes('quote') || 
+                                     messageText.toLowerCase().includes('need') ||
+                                     messageText.toLowerCase().includes('want') ||
+                                     messageText.toLowerCase().includes('get');
+                
+                // Also check if the message contains the category name (likely a generic request)
+                const containsCategoryName = selectedCategory.name.toLowerCase().split(' ').some(word => 
+                    messageText.toLowerCase().includes(word.toLowerCase())
                 );
+                
+                if (isQuoteRequest || containsCategoryName) {
+                    console.log('🎯 Detected generic quote request, showing product list');
+                    
+                    // Show available products list
+                    if (products && products.length > 0) {
+                        const productList = products.map((p, index) => `${index + 1}. ${p.name}`).join('\n');
+                        
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `Great! I see you need a quote for *${selectedCategory.name}* products. 📦\n\nHere are the available products:\n\n${productList}\n\nPlease type the name of the product you're interested in, or just the product number (e.g., "1" for ${products[0].name}).`
+                        );
+                    } else {
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `I understand you need a quote for ${selectedCategory.name}, but no products are available in this category at the moment. Please contact our support team.`
+                        );
+                    }
+                } else {
+                    await this.whatsappService.sendMessage(
+                        from,
+                        `I couldn't find a product named "${searchTerm}" in the ${selectedCategory.name} category. Please try a different product name or check the spelling.`
+                    );
+                }
             }
         } catch (error) {
             await mongoLogger.logError(error, { source: 'handle-product-selection' });
@@ -1568,14 +1732,13 @@ Would you like to get a quote for mylar bags today?`;
 
     async sendDimensionRequest(from, product) {
         const dimensionFields = product.dimensionFields || [];
-        const dimensionNames = dimensionFields.map(field => field.name).join(', ');
-        const dimensionUnits = dimensionFields.map(field => field.unit || 'inches').join(', ');
+        const dimensionNames = dimensionFields.map(field => field.name);
 
         // Get conversation state to show all collected information
         const conversationState = await conversationService.getConversationState(from);
         const conversationData = conversationState.conversationData || {};
 
-        let message = `Perfect! You selected: *${product.name}* 📏\n\n`;
+        let message = `Perfect! You selected: **${product.name}** 📏\n\n`;
         
         // Show all collected information
         message += `Here's what I have so far:\n`;
@@ -1584,19 +1747,77 @@ Would you like to get a quote for mylar bags today?`;
         message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
         message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
         
-        message += `Now I need the dimensions for your product.\n\n`;
-        message += `Required dimensions: *${dimensionNames}*\n\n`;
-        message += `Please provide dimensions in one of these formats:\n`;
-        message += `• ${dimensionFields.map(field => field.name).join(' x ')} (e.g., "10 x 8 x 3")\n`;
-        message += `• Separated by commas (e.g., "10, 8, 3")\n`;
-        message += `• With labels (e.g., "L:10, W:8, H:3")\n\n`;
-        message += `All dimensions should be in ${dimensionUnits}.`;
+        message += `Now I need the ${dimensionNames.length === 1 ? 'dimension' : 'dimensions'} for your product.\n\n`;
+        
+        // Create appropriate example based on the number of dimensions
+        if (dimensionNames.length === 1) {
+            message += `📏 **Required:** ${dimensionNames[0]} (Diameter)\n\n`;
+            message += `**Examples:**\n• Just one value: "5"\n• With label: "${dimensionNames[0]}:5"\n\n`;
+        } else if (dimensionNames.length === 2) {
+            message += `📏 **Required:** ${dimensionNames.join(' x ')}\n\n`;
+            message += `**Examples:**\n• Two values: "${dimensionNames.map(() => '5').join(' x ')}" or "${dimensionNames.map(() => '5').join(', ')}"\n• With labels: "${dimensionNames.map((name, i) => `${name}:5`).join(', ')}"\n\n`;
+        } else {
+            message += `📏 **Required:** ${dimensionNames.join(' x ')}\n\n`;
+            message += `**Examples:**\n• ${dimensionNames.length} values: "${dimensionNames.map(() => '5').join(' x ')}" or "${dimensionNames.map(() => '5').join(', ')}"\n• With labels: "${dimensionNames.map((name, i) => `${name}:5`).join(', ')}"\n\n`;
+        }
+        
+        message += `All dimensions should be in inches.`;
 
         await this.whatsappService.sendMessage(from, message);
     }
 
     async handleDimensionInput(messageText, from, conversationData, message = null) {
         try {
+            // Check if we're waiting for dimension confirmation
+            if (conversationData.awaitingDimensionConfirmation && conversationData.pendingDimensions) {
+                const response = messageText.toLowerCase().trim();
+                
+                if (response.includes('yes') || response.includes('y') || response.includes('correct') || response.includes('ok')) {
+                    // User confirmed the dimensions
+                    const dimensions = conversationData.pendingDimensions;
+                    const dimensionsList = dimensions.map(d => `${d.name}: ${d.value}`).join(', ');
+                    
+                    await this.whatsappService.sendMessage(
+                        from,
+                        `✅ Great! Confirmed dimensions: **${dimensionsList}**\n\nMoving to the next step...`
+                    );
+                    
+                    // Update conversation state with confirmed dimensions
+                    await conversationService.updateConversationState(from, {
+                        'conversationData.dimensions': dimensions,
+                        'conversationData.pendingDimensions': null,
+                        'conversationData.awaitingDimensionConfirmation': false
+                    });
+
+                    // Move to next step
+                    const nextStep = this.getNextStepAfterBypass('dimension_input', { ...conversationData, dimensions });
+                    await conversationService.updateConversationState(from, {
+                        currentStep: nextStep
+                    });
+
+                    // Process the next step
+                    const updatedState = await conversationService.getConversationState(from);
+                    await this.processConversationFlow(message, messageText, from, updatedState, false);
+                    return;
+                    
+                } else {
+                    // User wants to provide different dimensions
+                    await conversationService.updateConversationState(from, {
+                        'conversationData.pendingDimensions': null,
+                        'conversationData.awaitingDimensionConfirmation': false
+                    });
+                    
+                    const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+                    const dimensionNames = product.dimensionFields.map(f => f.name);
+                    
+                    await this.whatsappService.sendMessage(
+                        from,
+                        `No problem! Please provide the correct dimensions for **${product.name}**:\n\nRequired: **${dimensionNames.join(', ')}**\n\nFormat: **${dimensionNames.join(' x ')}** (e.g., "${dimensionNames.map(() => '5').join(' x ')}")`
+                    );
+                    return;
+                }
+            }
+            
             // Check if dimensions already exist
             if (conversationData.dimensions && conversationData.dimensions.length > 0) {
                 console.log("Dimensions already exist, bypassing dimension input step");
@@ -1610,7 +1831,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, false);
                 return;
             }
 
@@ -1653,9 +1874,9 @@ Would you like to get a quote for mylar bags today?`;
                     if (updatedData.dimensions && updatedData.dimensions.length > 0) {
                         console.log("Successfully extracted dimensions:", updatedData.dimensions);
                         
-                        // Update conversation state with dimensions
+                        // Update conversation state with dimensions (store in conversationData)
                         await conversationService.updateConversationState(from, {
-                            dimensions: updatedData.dimensions
+                            'conversationData.dimensions': updatedData.dimensions
                         });
 
                         // Move to next step
@@ -1666,7 +1887,7 @@ Would you like to get a quote for mylar bags today?`;
 
                         // Process the next step
                         const updatedState = await conversationService.getConversationState(from);
-                        await this.processConversationFlow(message, messageText, from, updatedState, true);
+                        await this.processConversationFlow(message, messageText, from, updatedState, false);
                         return;
                     }
                 }
@@ -1680,38 +1901,98 @@ Would you like to get a quote for mylar bags today?`;
                 const dimensionNames = product.dimensionFields.map(f => f.name);
                 const dimensionValues = this.parseDimensionValues(messageText);
                 
+                console.log('🔍 Dimension matching details:', {
+                    productName: product.name,
+                    requiredDimensions: dimensionNames,
+                    requiredCount: dimensionNames.length,
+                    providedValues: dimensionValues,
+                    providedCount: dimensionValues.length,
+                    messageText
+                });
+                
                 if (dimensionValues.length > 0) {
                     console.log("Manually parsed dimensions:", dimensionValues);
                     
-                    // Map dimension values to product dimension fields
-                    const dimensions = [];
-                    product.dimensionFields.forEach((field, index) => {
-                        if (dimensionValues[index] !== undefined) {
-                            dimensions.push({
-                                name: field.name,
-                                value: dimensionValues[index]
-                            });
-                        }
-                    });
-
-                    if (dimensions.length > 0) {
-                        console.log("Successfully parsed dimensions manually:", dimensions);
+                    // Check if the number of provided values matches required dimensions
+                    if (dimensionValues.length > dimensionNames.length) {
+                        // Too many dimensions provided
+                        const extraDimensions = dimensionValues.slice(dimensionNames.length);
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `I notice you provided ${dimensionValues.length} dimensions (${dimensionValues.join(', ')}), but **${product.name}** only requires **${dimensionNames.length} dimension${dimensionNames.length > 1 ? 's' : ''}**: **${dimensionNames.join(', ')}**.\n\nI'll use the first ${dimensionNames.length} value${dimensionNames.length > 1 ? 's' : ''}: **${dimensionValues.slice(0, dimensionNames.length).join(', ')}**\n\nIs this correct? Reply 'yes' to continue or provide the correct dimension${dimensionNames.length > 1 ? 's' : ''}.`
+                        );
                         
-                        // Update conversation state with dimensions
-                        await conversationService.updateConversationState(from, {
-                            dimensions: dimensions
+                        // Use only the required number of dimensions
+                        const limitedValues = dimensionValues.slice(0, dimensionNames.length);
+                        const dimensions = [];
+                        product.dimensionFields.forEach((field, index) => {
+                            if (limitedValues[index] !== undefined) {
+                                dimensions.push({
+                                    name: field.name,
+                                    value: limitedValues[index]
+                                });
+                            }
                         });
-
-                        // Move to next step
-                        const nextStep = this.getNextStepAfterBypass('dimension_input', { ...conversationData, dimensions });
+                        
+                        // Store the dimensions but wait for user confirmation
                         await conversationService.updateConversationState(from, {
-                            currentStep: nextStep
+                            'conversationData.pendingDimensions': dimensions,
+                            'conversationData.awaitingDimensionConfirmation': true
                         });
-
-                        // Process the next step
-                        const updatedState = await conversationService.getConversationState(from);
-                        await this.processConversationFlow(message, messageText, from, updatedState, true);
                         return;
+                        
+                    } else if (dimensionValues.length < dimensionNames.length) {
+                        // Not enough dimensions provided
+                        const missingCount = dimensionNames.length - dimensionValues.length;
+                        const providedDimensionsList = dimensionNames.slice(0, dimensionValues.length).map((name, index) => 
+                            `${name}: ${dimensionValues[index]}`
+                        ).join(', ');
+                        const missingDimensions = dimensionNames.slice(dimensionValues.length);
+                        
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `I received: **${providedDimensionsList}**\n\nBut **${product.name}** needs **${missingCount} more dimension${missingCount > 1 ? 's' : ''}**: **${missingDimensions.join(', ')}**\n\nPlease provide the missing dimension${missingCount > 1 ? 's' : ''}, or provide all dimensions in this format:\n**${dimensionNames.join(' x ')}** (e.g., "${dimensionNames.map(() => '5').join(' x ')}")`
+                        );
+                        return;
+                        
+                    } else {
+                        // Perfect match - correct number of dimensions
+                        const dimensions = [];
+                        product.dimensionFields.forEach((field, index) => {
+                            if (dimensionValues[index] !== undefined) {
+                                dimensions.push({
+                                    name: field.name,
+                                    value: dimensionValues[index]
+                                });
+                            }
+                        });
+
+                        if (dimensions.length > 0) {
+                            console.log("Successfully parsed dimensions manually:", dimensions);
+                            
+                            // Send confirmation message
+                            const dimensionsList = dimensions.map(d => `${d.name}: ${d.value}`).join(', ');
+                            await this.whatsappService.sendMessage(
+                                from,
+                                `✅ Perfect! I've set your dimensions: **${dimensionsList}**\n\nMoving to the next step...`
+                            );
+                            
+                            // Update conversation state with dimensions (store in conversationData)
+                            await conversationService.updateConversationState(from, {
+                                'conversationData.dimensions': dimensions
+                            });
+
+                            // Move to next step
+                            const nextStep = this.getNextStepAfterBypass('dimension_input', { ...conversationData, dimensions });
+                            await conversationService.updateConversationState(from, {
+                                currentStep: nextStep
+                            });
+
+                            // Process the next step
+                            const updatedState = await conversationService.getConversationState(from);
+                            await this.processConversationFlow(message, messageText, from, updatedState, false);
+                            return;
+                        }
                     }
                 }
             }
@@ -1728,10 +2009,24 @@ Would you like to get a quote for mylar bags today?`;
 
             // Ask for dimensions with product-specific dimension names
             const dimensionNames = product.dimensionFields.map(f => f.name);
+            
+            // Create appropriate example based on the number of dimensions
+            let exampleFormat = '';
+            let exampleValues = '';
+            if (dimensionNames.length === 1) {
+                exampleFormat = `**${dimensionNames[0]}** (e.g., "5")`;
+                exampleValues = `Just one value: "5"`;
+            } else if (dimensionNames.length === 2) {
+                exampleFormat = `**${dimensionNames.join(' x ')}** (e.g., "5 x 8")`;
+                exampleValues = `Two values: "5 x 8" or "5, 8"`;
+            } else {
+                exampleFormat = `**${dimensionNames.join(' x ')}** (e.g., "5 x 8 x 3")`;
+                exampleValues = `${dimensionNames.length} values: "${dimensionNames.map(() => '5').join(' x ')}" or "${dimensionNames.map(() => '5').join(', ')}"`;
+            }
 
             await this.whatsappService.sendMessage(
                 from,
-                `Please provide the dimensions for your ${product.name}:\n\nRequired dimensions: ${dimensionNames.join(', ')}\n\nYou can provide them in any of these formats:\n• ${dimensionNames.join(' x ')} (e.g., "10 x 8 x 3")\n• Separated by commas (e.g., "10, 8, 3")\n• With labels (e.g., "L:10, W:8, H:3")\n\nAll dimensions should be in inches.`
+                `Please provide the ${dimensionNames.length === 1 ? 'dimension' : 'dimensions'} for your **${product.name}**:\n\n📏 **Required:** ${exampleFormat}\n\n**Examples:**\n• ${exampleValues}\n• With labels: "${dimensionNames.map((name, i) => `${name}:5`).join(', ')}"\n\nAll dimensions should be in inches.`
             );
         } catch (error) {
             console.error('Error in handleDimensionInput:', error);
@@ -1750,6 +2045,10 @@ Would you like to get a quote for mylar bags today?`;
 
     async sendMaterialSelection(from, selectedProduct) {
         const product = await conversationService.getProductById(selectedProduct.id);
+        
+        // Get current conversation data to show what we already have
+        const conversationState = await conversationService.getConversationState(from);
+        const conversationData = conversationState.conversationData || {};
 
         const sections = [{
             title: "Available Materials",
@@ -1760,11 +2059,32 @@ Would you like to get a quote for mylar bags today?`;
             }))
         }];
 
-        const bodyText = `Great! Now please select the material for your mylar bags:`;
+        // Build acknowledgment message with collected details
+        let acknowledgmentText = "Great! I have the following details from your message:\n\n";
+        
+        if (conversationData.selectedProduct) {
+            acknowledgmentText += `• Product: ${conversationData.selectedProduct.name}\n`;
+        }
+        
+        if (conversationData.quantity && conversationData.quantity.length > 0) {
+            const quantity = conversationData.quantity[0];
+            acknowledgmentText += `• Quantity: ${quantity.toLocaleString()} pieces\n`;
+        }
+        
+        if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+            const finishNames = conversationData.selectedFinish.map(f => f.name).join(', ');
+            acknowledgmentText += `• Finishes: ${finishNames}\n`;
+        }
+        
+        if (conversationData.skus) {
+            acknowledgmentText += `• SKUs: ${conversationData.skus}\n`;
+        }
+        
+        acknowledgmentText += `\nNow please select the material for your ${product.name}:`;
 
         await this.whatsappService.sendListMessage(
             from,
-            bodyText,
+            acknowledgmentText,
             "Select Material",
             sections
         );
@@ -1882,6 +2202,12 @@ Would you like to get a quote for mylar bags today?`;
 
     async handleMaterialSelection(messageText, from, conversationData) {
         try {
+            console.log('🔧 handleMaterialSelection called:', {
+                messageText,
+                hasSelectedMaterial: !!conversationData.selectedMaterial,
+                selectedCategory: conversationData.selectedCategory?.name
+            });
+            
             // If this is the first time in material selection, ask for material
             if (!conversationData.selectedMaterial) {
                 await this.sendMaterialRequest(from, conversationData.selectedCategory);
@@ -1913,14 +2239,60 @@ Would you like to get a quote for mylar bags today?`;
                 return;
             }
 
-            // Find matching material
-            const selectedMaterial = materials.find(m =>
-                m.name.toLowerCase().includes(messageText.toLowerCase()) ||
-                messageText.toLowerCase().includes(m.name.toLowerCase())
-            );
+            // Find matching material with improved matching logic
+            let selectedMaterial = null;
+            
+            // First check if user sent a number (list position)
+            const trimmedText = messageText.trim();
+            const listPosition = parseInt(trimmedText);
+            
+            if (!isNaN(listPosition) && listPosition >= 1 && listPosition <= materials.length) {
+                // User selected by number (1-based indexing)
+                selectedMaterial = materials[listPosition - 1];
+                console.log(`🔢 User selected material by number ${listPosition}: ${selectedMaterial.name}`);
+            } else {
+                // Try exact match first
+                selectedMaterial = materials.find(m =>
+                    m.name.toLowerCase() === messageText.toLowerCase()
+                );
+                
+                // If no exact match, try partial matching
+                if (!selectedMaterial) {
+                    selectedMaterial = materials.find(m =>
+                        m.name.toLowerCase().includes(messageText.toLowerCase()) ||
+                        messageText.toLowerCase().includes(m.name.toLowerCase())
+                    );
+                }
+                
+                // If still no match, try matching individual words for complex descriptions
+                if (!selectedMaterial) {
+                    const messageWords = messageText.toLowerCase().split(/[\s,+\-_]+/).filter(word => word.length > 2);
+                    selectedMaterial = materials.find(m => {
+                        const materialWords = m.name.toLowerCase().split(/[\s,+\-_]+/).filter(word => word.length > 2);
+                        return messageWords.some(msgWord => 
+                            materialWords.some(matWord => 
+                                msgWord.includes(matWord) || matWord.includes(msgWord)
+                            )
+                        );
+                    });
+                }
+            }
+            
+            console.log('🔍 Material search result:', {
+                searchTerm: messageText,
+                foundMaterial: selectedMaterial ? selectedMaterial.name : 'Not found',
+                availableMaterials: materials.map(m => m.name)
+            });
 
             if (selectedMaterial) {
                 console.log("selectedMaterial ", selectedMaterial);
+                
+                // Send confirmation message
+                await this.whatsappService.sendMessage(
+                    from,
+                    `✅ Great! I've selected *${selectedMaterial.name}* as your material.\n\nMoving to the next step...`
+                );
+                
                 // Update conversation data with selected material
                 await conversationService.updateConversationState(from, {
                     'conversationData.selectedMaterial': {
@@ -1944,11 +2316,41 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState);
+                await this.processConversationFlow(null, messageText, from, updatedState);
             } else {
+                // Get current conversation data to show what we already have
+                const conversationState = await conversationService.getConversationState(from);
+                const conversationData = conversationState.conversationData || {};
+                
+                // Build acknowledgment message with collected details
+                let acknowledgmentText = "I have the following details from your message:\n\n";
+                
+                if (conversationData.selectedProduct) {
+                    acknowledgmentText += `• Product: ${conversationData.selectedProduct.name}\n`;
+                }
+                
+                if (conversationData.quantity && conversationData.quantity.length > 0) {
+                    const quantity = conversationData.quantity[0];
+                    acknowledgmentText += `• Quantity: ${quantity.toLocaleString()} pieces\n`;
+                }
+                
+                if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+                    const finishNames = conversationData.selectedFinish.map(f => f.name).join(', ');
+                    acknowledgmentText += `• Finishes: ${finishNames}\n`;
+                }
+                
+                if (conversationData.skus) {
+                    acknowledgmentText += `• SKUs: ${conversationData.skus}\n`;
+                }
+                
+                // Show available materials to help user
+                const availableMaterialsList = materials.map((m, index) => `${index + 1}. ${m.name}`).join('\n');
+                
+                acknowledgmentText += `\nI couldn't find a material named "${messageText}".\n\nAvailable materials for ${category.name}:\n${availableMaterialsList}\n\nPlease type the *number* (e.g., "7") or the full material name from the list above.`;
+                
                 await this.whatsappService.sendMessage(
                     from,
-                    `Please type your material name.`
+                    acknowledgmentText
                 );
             }
         } catch (error) {
@@ -2003,7 +2405,7 @@ Would you like to get a quote for mylar bags today?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, false);
                 return;
             }
 
@@ -2062,7 +2464,7 @@ What quantity would you like?`;
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(messageText, from, updatedState, true);
+                await this.processConversationFlow(message, messageText, from, updatedState, false);
                 return;
             }
 
@@ -2106,6 +2508,46 @@ What quantity would you like?`;
     async handleQuoteGeneration(messageText, from, conversationData, message) {
         console.log("conversationData111111111 ", conversationData);
         try {
+            // Check if this looks like a dimension message (e.g., "5x5x5", "10,8,3", etc.)
+            const isDimensionMessage = this.isDimensionMessage(messageText);
+            if (isDimensionMessage && (!conversationData.dimensions || conversationData.dimensions.length === 0)) {
+                console.log("Detected dimension message in quote generation, processing as dimensions");
+                
+                // Get the product to know what dimensions are needed
+                const product = conversationData.selectedProduct;
+                if (product && product.dimensionFields) {
+                    const dimensionNames = product.dimensionFields.map(f => f.name);
+                    const parsedDimensions = await this.parseDimensionsManually(messageText, dimensionNames);
+                    
+                    if (parsedDimensions.length > 0) {
+                        console.log("Successfully parsed dimensions from quote generation:", parsedDimensions);
+                        
+                        // Update conversation state with dimensions (store in conversationData)
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.dimensions': parsedDimensions
+                        });
+                        
+                        // Verify dimensions were stored
+                        const verifyState = await conversationService.getConversationState(from);
+                        console.log('🔍 Dimensions after storage:', verifyState.conversationData?.dimensions);
+                        
+                        // Move back to quote generation to continue
+                        await conversationService.updateConversationState(from, {
+                            currentStep: 'quote_generation'
+                        });
+                        
+                        // Verify dimensions are still there after step update
+                        const finalState = await conversationService.getConversationState(from);
+                        console.log('🔍 Dimensions after step update:', finalState.conversationData?.dimensions);
+                        
+                        // Process the next step
+                        const updatedState = await conversationService.getConversationState(from);
+                        await this.processConversationFlow(message, messageText, from, updatedState, false);
+                        return;
+                    }
+                }
+            }
+            
             // Validate required data before proceeding
             const validationResult = this.validateQuoteData(conversationData);
             if (!validationResult.isValid) {
@@ -2894,9 +3336,25 @@ Would you like to:`;
         const hasNumbers = /\d+/.test(message);
         
         // Check for measurement units
-        const hasUnits = /(mm|cm|inches?|ft|feet|meters?|kg|g|lb|pounds?|pieces?|units?|pcs)/i.test(message);
+        const hasUnits = /(mm|cm|inches?|ft|feet|meters?|kg|g|lb|pounds?|pieces?|units?|pcs|k|thousand)/i.test(message);
         
         return hasProductInfo || (hasNumbers && hasUnits);
+    }
+
+    isDimensionMessage(message) {
+        const trimmedMessage = message.trim();
+        
+        // Check for common dimension patterns
+        const dimensionPatterns = [
+            /^\d+x\d+x\d+$/,           // 5x5x5
+            /^\d+,\d+,\d+$/,           // 5,5,5
+            /^\d+\s+\d+\s+\d+$/,       // 5 5 5
+            /^\d+\.\d+x\d+\.\d+x\d+\.\d+$/, // 5.5x5.5x5.5
+            /^\d+\.\d+,\d+\.\d+,\d+\.\d+$/, // 5.5,5.5,5.5
+            /^[a-zA-Z]:\d+[x,]\d+[x,]\d+$/i, // L:5x5x5 or L:5,5,5
+        ];
+        
+        return dimensionPatterns.some(pattern => pattern.test(trimmedMessage));
     }
 
     async parseDimensionsManually(dimensionString, dimensionNames) {

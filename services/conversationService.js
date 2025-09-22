@@ -183,11 +183,26 @@ class ConversationService {
     }
 
     /**
-     * Get product by ID
+     * Get product by ID (supports both MongoDB ObjectId and ERP ID)
      */
     async getProductById(productId) {
         try {
-            return await Product.findOne({ _id: productId, isActive: true });
+            // Check if it's a valid MongoDB ObjectId (24 hex characters)
+            const isObjectId = /^[0-9a-fA-F]{24}$/.test(productId);
+            
+            if (isObjectId) {
+                // Search by MongoDB ObjectId
+                return await Product.findOne({ _id: productId, isActive: true });
+            } else {
+                // Search by ERP ID
+                const erpId = parseInt(productId);
+                if (!isNaN(erpId)) {
+                    return await Product.findOne({ erp_id: erpId, isActive: true });
+                } else {
+                    console.error('Invalid product ID format:', productId);
+                    return null;
+                }
+            }
         } catch (error) {
             console.error('Error getting product by ID:', error);
             throw error;
