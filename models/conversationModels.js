@@ -33,10 +33,11 @@ const conversationStateSchema = new mongoose.Schema({
             name: String,
             value: Number
         }],
-        selectedMaterial: {
+        selectedMaterial: [{
             _id: String,
             name: String,
-        },
+            erp_id: Number
+        }],
         selectedFinish: [{
             _id: String,
             name: String

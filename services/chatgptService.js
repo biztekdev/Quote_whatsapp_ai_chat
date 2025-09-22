@@ -96,13 +96,13 @@ Return a JSON object with these fields (use null if not mentioned):
 {
   "product_type": "string", // e.g., "stand up pouch", "flat pouch", "pillow pouch", "label", "folding carton", "seal end box"
   "category": "string", // e.g., "mylar bag", "label", "folding carton" 
-  "quantity": "number", // convert "5k" to 5000, "20k" to 20000, etc.
+  "quantities": ["array of numbers"], // e.g., [1000, 2000, 5000] or single [5000]
   "dimensions": {
     "width": "number", // in inches
     "height": "number", // in inches  
     "depth": "number" // in inches, for 3D products
   },
-  "material": "string", // e.g., "holographic", "MPET", "kraft", "PET", "white card board"
+  "materials": ["array of strings"], // e.g., ["PET", "White PE"], ["holographic", "MPET"]
   "finishes": ["array of strings"], // e.g., ["spot UV", "foil", "matte", "gloss", "soft touch"]
   "skus": "number", // number of different designs/SKUs
   "special_requirements": ["array of strings"], // e.g., ["white inside", "on roll"]
@@ -110,10 +110,14 @@ Return a JSON object with these fields (use null if not mentioned):
 }
 
 Key conversions:
-- "5k" = 5000, "20k" = 20000, "12k" = 12000
+- "5k" = [5000], "20k" = [20000], "12k" = [12000]
+- "1000, 2000, 4000" = [1000, 2000, 4000]
+- "100020004000" should be parsed as [1000, 2000, 4000] if it looks like concatenated quantities
 - "4*5inches" or "4x5" = width: 4, height: 5  
 - "4x6x2" = width: 4, height: 6, depth: 2
 - "Matt + spot uv" = ["matte", "spot UV"]
+- "PET + White PE" = ["PET", "White PE"]
+- Extract individual materials, not compound strings
 - "standup pouches" = category: "mylar bag", product_type: "stand up pouch"
 - Map common product types to categories correctly
 
@@ -192,14 +196,14 @@ Only return the JSON object, no other text.`;
       }];
     }
 
-    // Convert quantity
-    if (chatgptData.quantity) {
-      entities['quantities:quantities'] = [{
-        body: chatgptData.quantity.toString(),
+    // Convert quantities (now supports multiple quantities)
+    if (chatgptData.quantities && chatgptData.quantities.length > 0) {
+      entities['quantities:quantities'] = chatgptData.quantities.map(qty => ({
+        body: qty.toString(),
         confidence: chatgptData.confidence_score || 0.9,
-        value: chatgptData.quantity,
+        value: qty,
         type: 'value'
-      }];
+      }));
     }
 
     // Convert dimensions
@@ -219,14 +223,14 @@ Only return the JSON object, no other text.`;
       }
     }
 
-    // Convert material
-    if (chatgptData.material) {
-      entities['material:material'] = [{
-        body: chatgptData.material,
+    // Convert materials (now supports multiple materials)
+    if (chatgptData.materials && chatgptData.materials.length > 0) {
+      entities['material:material'] = chatgptData.materials.map(material => ({
+        body: material,
         confidence: chatgptData.confidence_score || 0.9,
-        value: chatgptData.material,
+        value: material,
         type: 'value'
-      }];
+      }));
     }
 
     // Convert finishes

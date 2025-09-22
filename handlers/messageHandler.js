@@ -677,67 +677,91 @@ class MessageHandler {
                                     }
                                     break;
                                 case 'material:material':
-                                    const material = value || body;
+                                    const materials = Array.isArray(entities[entityType]) ? 
+                                        entities[entityType].map(e => e.value || e.body) : 
+                                        [value || body];
+                                    
                                     console.log("🚨 MATERIAL ENTITY DETECTED:", {
-                                        material,
-                                        value,
-                                        body,
+                                        materials,
+                                        originalEntity: entities[entityType],
                                         messageText,
-                                        confidence,
-                                        hasExistingMaterial: !!currentConversationData.selectedMaterial
+                                        hasExistingMaterial: !!(currentConversationData.selectedMaterial && currentConversationData.selectedMaterial.length > 0)
                                     });
                                     
-                                    // Only update material if not already confirmed (prevent overriding during material selection step)
-                                    if (!currentConversationData.selectedMaterial || !currentConversationData.selectedMaterial.name) {
-                                        const findMaterial = await this.findMaterialByName(material);
-                                        if (findMaterial) {
-                                            updatedData.selectedMaterial = {
-                                                _id: findMaterial.erp_id.toString(),
-                                                name: findMaterial.name,
-                                            };
-                                            console.log("🚨 AUTO-SELECTED MATERIAL:", findMaterial.name);
-                                        } else {
-                                            // Store the requested material even if not found in database
-                                            updatedData.requestedMaterial = material;
-                                            console.log("Material not found in database, storing as requested:", material);
+                                    // Only update materials if not already confirmed
+                                    if (!currentConversationData.selectedMaterial || currentConversationData.selectedMaterial.length === 0) {
+                                        const foundMaterials = [];
+                                        let requestedMaterials = [];
+                                        
+                                        for (const material of materials) {
+                                            const findMaterial = await this.findMaterialByName(material);
+                                            if (findMaterial) {
+                                                foundMaterials.push({
+                                                    _id: findMaterial.erp_id.toString(),
+                                                    name: findMaterial.name,
+                                                    erp_id: findMaterial.erp_id
+                                                });
+                                                console.log("🚨 AUTO-SELECTED MATERIAL:", findMaterial.name, "SKU:", findMaterial.erp_id);
+                                            } else {
+                                                requestedMaterials.push(material);
+                                                console.log("Material not found in database, storing as requested:", material);
+                                            }
+                                        }
+                                        
+                                        if (foundMaterials.length > 0) {
+                                            updatedData.selectedMaterial = foundMaterials;
+                                        }
+                                        if (requestedMaterials.length > 0) {
+                                            updatedData.requestedMaterial = requestedMaterials.join(' + ');
                                         }
                                     } else {
-                                        console.log("Material already selected, skipping extraction to prevent override:", currentConversationData.selectedMaterial.name);
+                                        console.log("Materials already selected, skipping extraction to prevent override");
                                     }
                                     break;
                                 case 'quantities:quantities':
-                                    const quantity = value || body;
-                                    
                                     // Don't extract quantity if this looks like a dimension string
                                     if (messageText && this.isDimensionMessage(messageText)) {
                                         console.log("Skipping quantity extraction - detected dimension message:", messageText);
                                         break;
                                     }
                                     
+                                    const quantities = Array.isArray(entities[entityType]) ? 
+                                        entities[entityType].map(e => e.value || e.body) : 
+                                        [value || body];
+                                    
+                                    console.log("🔢 QUANTITY ENTITIES DETECTED:", {
+                                        quantities,
+                                        originalEntity: entities[entityType],
+                                        messageText
+                                    });
+                                    
                                     if (!updatedData.quantity) {
                                         updatedData.quantity = [];
                                     }
-                                    // Convert to number for comparison - handle comma-separated numbers and "k" notation
-                                    const cleanQuantity = quantity.toString().replace(/,/g, '');
                                     
-                                    // Handle "k" notation (e.g., "19k" -> 19000)
-                                    let numericQuantity;
-                                    if (cleanQuantity.toLowerCase().includes('k')) {
-                                        // Extract number before 'k' and multiply by 1000
-                                        const kMatch = cleanQuantity.toLowerCase().match(/(\d+(?:\.\d+)?)k/);
-                                        if (kMatch) {
-                                            numericQuantity = parseFloat(kMatch[1]) * 1000;
-                                            console.log(`Converted "${cleanQuantity}" to ${numericQuantity} (k notation)`);
+                                    for (const quantity of quantities) {
+                                        // Convert to number for comparison - handle comma-separated numbers and "k" notation
+                                        const cleanQuantity = quantity.toString().replace(/,/g, '');
+                                        
+                                        // Handle "k" notation (e.g., "19k" -> 19000)
+                                        let numericQuantity;
+                                        if (cleanQuantity.toLowerCase().includes('k')) {
+                                            // Extract number before 'k' and multiply by 1000
+                                            const kMatch = cleanQuantity.toLowerCase().match(/(\d+(?:\.\d+)?)k/);
+                                            if (kMatch) {
+                                                numericQuantity = parseFloat(kMatch[1]) * 1000;
+                                                console.log(`Converted "${cleanQuantity}" to ${numericQuantity} (k notation)`);
+                                            } else {
+                                                numericQuantity = parseInt(cleanQuantity);
+                                            }
                                         } else {
                                             numericQuantity = parseInt(cleanQuantity);
                                         }
-                                    } else {
-                                        numericQuantity = parseInt(cleanQuantity);
-                                    }
-                                    
-                                    if (!isNaN(numericQuantity) && !updatedData.quantity.includes(numericQuantity)) {
-                                        updatedData.quantity.push(numericQuantity);
-                                        console.log(`Added quantity: ${numericQuantity} (from "${quantity}")`);
+                                        
+                                        if (!isNaN(numericQuantity) && !updatedData.quantity.includes(numericQuantity)) {
+                                            updatedData.quantity.push(numericQuantity);
+                                            console.log(`Added quantity: ${numericQuantity} (from "${quantity}")`);
+                                        }
                                     }
                                     break;
                                 case 'skus:skus':
@@ -1584,8 +1608,15 @@ Would you like to get a quote for mylar bags today?`;
         
         // Show collected information if any
         let hasCollectedInfo = false;
-        if (conversationData.selectedMaterial?.name || conversationData.requestedMaterial) {
-            bodyText += `🧱 **Material:** ${conversationData.selectedMaterial?.name || conversationData.requestedMaterial}\n`;
+        if ((conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) || conversationData.requestedMaterial) {
+            if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
+                const materialsText = conversationData.selectedMaterial
+                    .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                    .join(', ');
+                bodyText += `🧱 **Materials:** ${materialsText}\n`;
+            } else {
+                bodyText += `🧱 **Material:** ${conversationData.requestedMaterial}\n`;
+            }
             hasCollectedInfo = true;
         }
         if (conversationData.quantity?.length > 0) {
@@ -1779,7 +1810,17 @@ Would you like to get a quote for mylar bags today?`;
         // Show all collected information
         message += `Here's what I have so far:\n`;
         message += `📂 **Category:** ${conversationData.selectedCategory?.name || 'Not specified'}\n`;
-        message += `🧱 **Material:** ${conversationData.selectedMaterial?.name || conversationData.requestedMaterial || 'Not specified'}\n`;
+        
+        // Handle multiple materials with SKUs
+        if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
+            const materialsText = conversationData.selectedMaterial
+                .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                .join(', ');
+            message += `🧱 **Materials:** ${materialsText}\n`;
+        } else {
+            message += `🧱 **Material:** ${conversationData.requestedMaterial || 'Not specified'}\n`;
+        }
+        
         message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
         message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
         message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
@@ -2262,7 +2303,7 @@ Would you like to get a quote for mylar bags today?`;
         try {
             console.log('🔧 handleMaterialSelection called:', {
                 messageText,
-                hasSelectedMaterial: !!conversationData.selectedMaterial?.name,
+                hasSelectedMaterial: !!(conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0),
                 selectedMaterial: conversationData.selectedMaterial,
                 selectedMaterialKeys: Object.keys(conversationData.selectedMaterial || {}),
                 selectedMaterialName: conversationData.selectedMaterial?.name,
@@ -2372,10 +2413,11 @@ Would you like to get a quote for mylar bags today?`;
                 // Bypass material_selection and move to next step
                 const nextStep = this.getNextStepAfterBypass('material_selection', {
                     ...conversationData,
-                    selectedMaterial: {
+                    selectedMaterial: [{
                         _id: selectedMaterial.erp_id.toString(),
-                        name: selectedMaterial.name
-                    }
+                        name: selectedMaterial.name,
+                        erp_id: selectedMaterial.erp_id
+                    }]
                 });
 
                 await conversationService.updateConversationState(from, {
@@ -2640,7 +2682,10 @@ What quantity would you like?`;
                 // Format the acknowledgment message
                 const categoryName = conversationData.selectedCategory?.name || 'Not specified';
                 const productName = conversationData.selectedProduct?.name || 'Not specified';
-                const materialName = conversationData.selectedMaterial?.name || 'Not specified';
+                // Format materials with SKUs
+                const materialName = (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) 
+                    ? conversationData.selectedMaterial.map(m => `${m.name} (SKU: ${m.erp_id})`).join(', ')
+                    : conversationData.requestedMaterial || 'Not specified';
 
                 // Format finishes
                 const finishNames = conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified';
@@ -2658,7 +2703,7 @@ What quantity would you like?`;
 
 📦 **Category:** ${categoryName}
 🔧 **Product:** ${productName}
-🧱 **Material:** ${materialName}
+🧱 **Materials:** ${materialName}
 ✨ **Finishes:** ${finishNames}
 📏 **Dimensions:** ${dimensionsText}
 🔢 **Quantities:** ${quantitiesText}
@@ -2925,7 +2970,14 @@ Have a great day! 🌟`;
             
             // Add product details
             pricingMessage += `📦 **Product:** ${conversationData.selectedProduct?.name || 'N/A'}\n`;
-            pricingMessage += `🧱 **Material:** ${conversationData.selectedMaterial?.name || 'N/A'}\n`;
+            if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
+                const materialsText = conversationData.selectedMaterial
+                    .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                    .join(', ');
+                pricingMessage += `🧱 **Materials:** ${materialsText}\n`;
+            } else {
+                pricingMessage += `🧱 **Material:** ${conversationData.requestedMaterial || 'N/A'}\n`;
+            }
             pricingMessage += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'N/A'}\n`;
             pricingMessage += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'N/A'}\n\n`;
             
