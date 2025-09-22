@@ -1041,7 +1041,7 @@ class MessageHandler {
                 return conversationData.dimensions && conversationData.dimensions.length > 0;
 
             case 'material_selection':
-                return conversationData.selectedMaterial && conversationData.selectedMaterial.name;
+                return conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0;
 
             case 'finish_selection':
                 return conversationData.selectedFinish && conversationData.selectedFinish.length > 0;
@@ -1063,7 +1063,7 @@ class MessageHandler {
             conversationData.dimensions &&
             conversationData.dimensions.length > 0 &&
             conversationData.selectedMaterial &&
-            conversationData.selectedMaterial.name &&
+            conversationData.selectedMaterial.length > 0 &&
             conversationData.selectedFinish &&
             conversationData.selectedFinish.length > 0 &&
             conversationData.quantity &&
@@ -2315,7 +2315,7 @@ Would you like to get a quote for mylar bags today?`;
             
             // If this is the first time in material selection, ask for material
             // OR if the message looks like dimensions (transitioning from dimension_input step)
-            if (!conversationData.selectedMaterial || !conversationData.selectedMaterial.name || isDimensionMessage) {
+            if (!conversationData.selectedMaterial || conversationData.selectedMaterial.length === 0 || isDimensionMessage) {
                 if (isDimensionMessage) {
                     console.log('🎯 Detected dimension message in material selection step, asking for material:', messageText);
                 }
@@ -2402,12 +2402,13 @@ Would you like to get a quote for mylar bags today?`;
                     `✅ Great! I've selected *${selectedMaterial.name}* as your material.\n\nMoving to the next step...`
                 );
                 
-                // Update conversation data with selected material
+                // Update conversation data with selected material as array
                 await conversationService.updateConversationState(from, {
-                    'conversationData.selectedMaterial': {
+                    'conversationData.selectedMaterial': [{
                         _id: selectedMaterial.erp_id.toString(),
-                        name: selectedMaterial.name
-                    }
+                        name: selectedMaterial.name,
+                        erp_id: selectedMaterial.erp_id
+                    }]
                 });
 
                 // Bypass material_selection and move to next step
@@ -2677,6 +2678,15 @@ What quantity would you like?`;
                 return;
             }
 
+            // Set default SKU value if not provided
+            if (!conversationData.skus) {
+                await conversationService.updateConversationState(from, {
+                    'conversationData.skus': 1
+                });
+                // Update local reference
+                conversationData.skus = 1;
+            }
+
             // Check if this is the first time in quote generation (acknowledge selections)
             if (!conversationData.quoteAcknowledged) {
                 // Format the acknowledgment message
@@ -2696,8 +2706,8 @@ What quantity would you like?`;
                 // Format quantities
                 const quantitiesText = conversationData.quantity?.join(', ') || 'Not specified';
 
-                // Format SKUs
-                const skusText = conversationData.skus ? conversationData.skus.toString() : 'Not specified';
+                // Format SKUs - default to 1 if not specified
+                const skusText = conversationData.skus ? conversationData.skus.toString() : '1';
 
                 const acknowledgmentMessage = `Perfect! 🎯 Let me confirm your selections:
 
@@ -2795,6 +2805,56 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         );
                     }
                 } else if (!conversationData.pricing_done) {
+                    // Check if user is providing additional information (like SKUs) before confirming
+                    if (messageText.toLowerCase().includes('sku') && !response.includes('yes') && !response.includes('no')) {
+                        // Extract SKU information
+                        const skuMatch = messageText.match(/sku\s*(?:is\s*)?(\d+)/i);
+                        if (skuMatch) {
+                            const skuValue = parseInt(skuMatch[1]);
+                            
+                            // Update conversation data with SKU
+                            await conversationService.updateConversationState(from, {
+                                'conversationData.skus': skuValue
+                            });
+                            
+                            // Re-send confirmation with updated information
+                            const updatedState = await conversationService.getConversationState(from);
+                            const updatedData = updatedState.conversationData;
+                            
+                            // Format the updated acknowledgment message
+                            const categoryName = updatedData.selectedCategory?.name || 'Not specified';
+                            const productName = updatedData.selectedProduct?.name || 'Not specified';
+                            const materialName = (updatedData.selectedMaterial && updatedData.selectedMaterial.length > 0) 
+                                ? updatedData.selectedMaterial.map(m => `${m.name} (SKU: ${m.erp_id})`).join(', ')
+                                : updatedData.requestedMaterial || 'Not specified';
+                            const finishNames = updatedData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified';
+                            const dimensionsText = updatedData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified';
+                            const quantitiesText = updatedData.quantity?.join(', ') || 'Not specified';
+                            const skusText = updatedData.skus ? updatedData.skus.toString() : '1';
+
+                            const updatedAcknowledgmentMessage = `Perfect! 🎯 Let me confirm your updated selections:
+
+📦 **Category:** ${categoryName}
+🔧 **Product:** ${productName}
+🧱 **Materials:** ${materialName}
+✨ **Finishes:** ${finishNames}
+📏 **Dimensions:** ${dimensionsText}
+🔢 **Quantities:** ${quantitiesText}
+🎨 **SKUs/Designs:** ${skusText}
+
+Based on the information you've provided, would you like me to generate pricing for your quote? 
+
+Please reply with "Yes" to get pricing details, or "No" if you'd like to make any changes.`;
+
+                            await this.sendMessageOnce(
+                                message.id,
+                                from,
+                                updatedAcknowledgmentMessage
+                            );
+                            return;
+                        }
+                    }
+                    
                     // User is responding to initial pricing question
                     if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
                         // User wants pricing, generate and send quote
@@ -2857,12 +2917,26 @@ Have a great day! 🌟`;
                         });
 
                     } else {
-                        // Unclear response, ask for clarification
-                        await this.sendMessageOnce(
-                            message.id,
-                            from,
-                            "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
-                        );
+                        // Unclear response - check if they're trying to provide additional information
+                        if (messageText.length > 2 && (messageText.toLowerCase().includes('sku') || 
+                            messageText.toLowerCase().includes('design') || 
+                            messageText.toLowerCase().includes('quantity') ||
+                            messageText.toLowerCase().includes('material') ||
+                            messageText.toLowerCase().includes('finish'))) {
+                            
+                            await this.sendMessageOnce(
+                                message.id,
+                                from,
+                                "I see you want to update some information. To make changes, please reply with 'No' and I'll help you update your quote details. Or reply with 'Yes' to proceed with the current information for pricing."
+                            );
+                        } else {
+                            // Unclear response, ask for clarification
+                            await this.sendMessageOnce(
+                                message.id,
+                                from,
+                                "I didn't quite catch that. Please reply with 'Yes' if you'd like pricing details, or 'No' if you'd like to make changes."
+                            );
+                        }
                     }
                 } else {
                     // Unclear response, ask for clarification
@@ -3555,7 +3629,7 @@ Would you like to:`;
         }
 
         // Check for selected material
-        if (!conversationData.selectedMaterial || !conversationData.selectedMaterial.name) {
+        if (!conversationData.selectedMaterial || conversationData.selectedMaterial.length === 0) {
             missingFields.push("• Material selection");
             isValid = false;
         }
