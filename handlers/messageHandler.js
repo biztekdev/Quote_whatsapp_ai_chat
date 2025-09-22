@@ -1781,6 +1781,7 @@ Would you like to get a quote for mylar bags today?`;
         message += `📂 **Category:** ${conversationData.selectedCategory?.name || 'Not specified'}\n`;
         message += `🧱 **Material:** ${conversationData.selectedMaterial?.name || conversationData.requestedMaterial || 'Not specified'}\n`;
         message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
+        message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
         message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
         
         message += `Now I need the ${dimensionNames.length === 1 ? 'dimension' : 'dimensions'} for your product.\n\n`;
@@ -2184,6 +2185,7 @@ Would you like to get a quote for mylar bags today?`;
             message += `🔧 **Product:** ${conversationData.selectedProduct?.name || 'Not specified'}\n`;
             message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
             message += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified'}\n`;
+            message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
             message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
             message += `Type your material name.`;
 
