@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 import WhatsAppService from './services/whatsappService.js';
 import MessageHandler from './handlers/messageHandler.js';
 import WitService from './services/witService.js';
+import ChatGPTService from './services/chatgptService.js';
 import mongoLogger from './services/mongoLogger.js';
 import messageStatusService from './services/messageStatusService.js';
 import webhookService from './services/webhookService.js';
@@ -57,8 +58,11 @@ const whatsappService = new WhatsAppService();
 // await mongoLogger.info('Initializing WitService...');
 const witService = new WitService();
 
+// await mongoLogger.info('Initializing ChatGPT service...');
+const chatgptService = ChatGPTService;
+
 // await mongoLogger.info('Initializing message handler...');
-const messageHandler = new MessageHandler(whatsappService, witService.client);
+const messageHandler = new MessageHandler(whatsappService, chatgptService);
 
 // await mongoLogger.info('Services initialized successfully!');
 

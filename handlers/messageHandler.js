@@ -12,10 +12,10 @@ import { ProcessedMessage } from '../models/processedMessageModel.js';
 dotenv.config();
 
 class MessageHandler {
-    constructor(whatsappService, wit) {
+    constructor(whatsappService, aiService) {
         this.whatsappService = whatsappService;
-        this.wit = wit;
-        this.witService = new WitService();
+        this.aiService = aiService; // ChatGPT or Wit service
+        this.witService = new WitService(); // Keep for backward compatibility
         // Remove old responseTracker - now using MessageStatusService
         
         // Create a wrapper for whatsappService.sendMessage to track all messages
@@ -276,32 +276,32 @@ class MessageHandler {
                 return;
             }
 
-            // Process message with Wit.ai FIRST to extract entities before making decisions
-            let witResponse = null;
-            let witEntities = {};
+            // Process message with ChatGPT FIRST to extract entities before making decisions
+            let aiResponse = null;
+            let aiEntities = {};
             
             try {
-                // console.log("🤖 Processing message with Wit.ai:", messageText);
-                witResponse = await this.witService.processMessage(messageText);
+                console.log("🤖 Processing message with ChatGPT:", messageText);
+                aiResponse = await this.aiService.processMessage(messageText);
                 
-                // Log the complete Wit.ai response
-                console.log("📊 Complete Wit.ai Response:", JSON.stringify(witResponse, null, 2));
+                // Log the complete ChatGPT response
+                console.log("📊 Complete ChatGPT Response:", JSON.stringify(aiResponse, null, 2));
                 
-                witEntities = witResponse?.data?.entities || {};
+                aiEntities = aiResponse?.data?.entities || {};
                 
-            } catch (witError) {
-                console.error("❌ Wit.ai processing failed:", witError);
-                await mongoLogger.error('Wit.ai processing failed', { 
+            } catch (aiError) {
+                console.error("❌ ChatGPT processing failed:", aiError);
+                await mongoLogger.error('ChatGPT processing failed', { 
                     messageText, 
                     from,
-                    error: witError.message,
-                    stack: witError.stack,
-                    step: 'WIT_ERROR'
+                    error: aiError.message,
+                    stack: aiError.stack,
+                    step: 'AI_ERROR'
                 });
                 
-                // Continue without Wit.ai - use empty entities
-                witResponse = { data: { entities: {} } };
-                witEntities = {};
+                // Continue without ChatGPT - use empty entities
+                aiResponse = { data: { entities: {} } };
+                aiEntities = {};
             }
 
             // Check if user wants to start a new quote OR is greeting (regardless of current step)
@@ -321,12 +321,12 @@ class MessageHandler {
                 wantsNewQuote: wantsNewQuote,
                 isGreetingMessage: isGreetingMessage,
                 hasProductInfo: hasProductInfo,
-                hasEntities: Object.keys(witEntities).length > 0
+                hasEntities: Object.keys(aiEntities).length > 0
             });
 
             // Only reset conversation for simple greetings or explicit new quote requests
             // Don't reset for complex messages with product information or detected entities
-            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo && Object.keys(witEntities).length === 0)) {
+            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo && Object.keys(aiEntities).length === 0)) {
                 console.log("User wants new quote or is simple greeting, resetting conversation");
                 
                 // Reset conversation to start fresh
@@ -338,7 +338,7 @@ class MessageHandler {
             }
             
             // If it's a complex message with product info OR entities detected, process it with entity extraction
-            if (hasProductInfo || Object.keys(witEntities).length > 0) {
+            if (hasProductInfo || Object.keys(aiEntities).length > 0) {
                 console.log("Complex message with product information or entities detected, processing with entity extraction");
                 
                 // For greeting messages with entities, reset conversation but extract entities first
@@ -363,7 +363,7 @@ class MessageHandler {
                                           
             if (shouldExtractEntities) {
                 updatedConversationData = await this.extractAndUpdateConversationData(
-                witResponse.data.entities,
+                aiResponse.data.entities,
                     conversationState.conversationData || {},
                     messageText
             );
@@ -389,7 +389,7 @@ class MessageHandler {
             const nextStep = await this.determineNextStep(
                 conversationState.currentStep,
                 updatedConversationData,
-                witResponse.data.entities
+                aiResponse.data.entities
             );
             console.log('🎯 determineNextStep result:', nextStep);
             // Update conversation state with extracted data
@@ -452,6 +452,23 @@ class MessageHandler {
                 return [];
             }
 
+            // Check if this looks like a dimension string (has dimension indicators)
+            const dimensionIndicators = [
+                'x', '×', '*', 'inch', 'cm', 'mm', 'size:', 'dimension', 
+                'width', 'height', 'depth', 'diameter', 'w:', 'h:', 'd:', 'dia:'
+            ];
+            
+            const lowerStr = dimensionString.toLowerCase();
+            const hasDimensionIndicator = dimensionIndicators.some(indicator => 
+                lowerStr.includes(indicator)
+            );
+            
+            // If no dimension indicators, don't parse as dimensions
+            if (!hasDimensionIndicator) {
+                console.log(`No dimension indicators found in "${dimensionString}", skipping dimension parsing`);
+                return [];
+            }
+
             // Replace common separators with comma and clean the string
             let cleanedString = dimensionString
                 .replace(/[x×*]/gi, ',')  // Replace x, ×, or * with comma
@@ -465,7 +482,7 @@ class MessageHandler {
                 .map(val => val.trim())
                 .filter(val => val !== '')
                 .map(val => parseFloat(val))
-                .filter(val => !isNaN(val));
+                .filter(val => !isNaN(val) && val > 0 && val < 1000); // Reasonable dimension limits
 
             console.log(`Parsed dimensions from "${dimensionString}":`, values);
             return values;
@@ -661,6 +678,14 @@ class MessageHandler {
                                     break;
                                 case 'material:material':
                                     const material = value || body;
+                                    console.log("🚨 MATERIAL ENTITY DETECTED:", {
+                                        material,
+                                        value,
+                                        body,
+                                        messageText,
+                                        confidence,
+                                        hasExistingMaterial: !!currentConversationData.selectedMaterial
+                                    });
                                     
                                     // Only update material if not already confirmed (prevent overriding during material selection step)
                                     if (!currentConversationData.selectedMaterial || !currentConversationData.selectedMaterial.name) {
@@ -670,7 +695,7 @@ class MessageHandler {
                                                 _id: findMaterial.erp_id.toString(),
                                                 name: findMaterial.name,
                                             };
-                                            console.log("Found material:", findMaterial.name);
+                                            console.log("🚨 AUTO-SELECTED MATERIAL:", findMaterial.name);
                                         } else {
                                             // Store the requested material even if not found in database
                                             updatedData.requestedMaterial = material;
@@ -909,29 +934,40 @@ class MessageHandler {
 
     async findMaterialByName(materialName) {
         try {
-            console.log("Searching for material:", materialName);
+            console.log("🔍 Searching for material:", materialName);
             
             // Search all active materials
             const materials = await Material.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
-            // console.log("Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
+            console.log("🔍 Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
             
             // Search in name field (exact match first)
             let foundMaterial = materials.find(material =>
                 material.name.toLowerCase() === materialName.toLowerCase()
             );
             
+            if (foundMaterial) {
+                console.log("🎯 Found exact match:", foundMaterial.name);
+                return foundMaterial;
+            }
+            
             // If not found, search for partial match in name
-            if (!foundMaterial) {
-                foundMaterial = materials.find(material =>
-                    material.name.toLowerCase().includes(materialName.toLowerCase())
-                );
+            foundMaterial = materials.find(material =>
+                material.name.toLowerCase().includes(materialName.toLowerCase())
+            );
+            
+            if (foundMaterial) {
+                console.log("🎯 Found partial match in name:", foundMaterial.name);
+                return foundMaterial;
             }
             
             // If not found in name, search in description
-            if (!foundMaterial) {
-                foundMaterial = materials.find(material =>
-                    material.description && material.description.toLowerCase().includes(materialName.toLowerCase())
-                );
+            foundMaterial = materials.find(material =>
+                material.description && material.description.toLowerCase().includes(materialName.toLowerCase())
+            );
+            
+            if (foundMaterial) {
+                console.log("🎯 Found match in description:", foundMaterial.name);
+                return foundMaterial;
             }
             
             // If not found in description, try searching for individual parts (for composite materials like "PET + MPET + PE")
@@ -1189,17 +1225,17 @@ class MessageHandler {
 
     async handleStartStep(messageText, from, messageId) {
         try {
-            // Process with Wit.ai to detect greeting (with fallback)
+            // Process with ChatGPT to detect greeting (with fallback)
             let intent = null;
             try {
-                const witResponse = await this.witService.processMessage(messageText);
-                intent = witResponse.data?.intents?.[0]?.name;
-            } catch (witError) {
-                console.log("Wit.ai not available, using fallback greeting detection");
-                await mongoLogger.warn('Wit.ai unavailable in handleStartStep, using fallback', { 
+                const aiResponse = await this.aiService.processMessage(messageText);
+                intent = aiResponse.data?.intents?.[0]?.name;
+            } catch (aiError) {
+                console.log("ChatGPT not available, using fallback greeting detection");
+                await mongoLogger.warn('ChatGPT unavailable in handleStartStep, using fallback', { 
                     messageText, 
                     from,
-                    error: witError.message
+                    error: aiError.message
                 });
             }
 
@@ -1858,18 +1894,18 @@ Would you like to get a quote for mylar bags today?`;
                 }
             }
 
-            // Try to extract dimensions from the message using Wit.ai
+            // Try to extract dimensions from the message using ChatGPT
             console.log("Attempting to extract dimensions from message:", messageText);
             
             try {
-                const witResponse = await this.witService.processMessage(messageText);
-                console.log("Wit.ai response for dimensions:", JSON.stringify(witResponse, null, 2));
+                const aiResponse = await this.aiService.processMessage(messageText);
+                console.log("ChatGPT response for dimensions:", JSON.stringify(aiResponse, null, 2));
 
-                if (witResponse.entities && witResponse.entities['dimensions:dimensions']) {
-                    console.log("Found dimensions in Wit.ai response, processing...");
+                if (aiResponse.data && aiResponse.data.entities && aiResponse.data.entities['dimensions:dimensions']) {
+                    console.log("Found dimensions in ChatGPT response, processing...");
                     
                     // Extract and update conversation data with dimensions
-                    const updatedData = await this.extractAndUpdateConversationData(witResponse.entities, conversationData, messageText);
+                    const updatedData = await this.extractAndUpdateConversationData(aiResponse.data.entities, conversationData, messageText);
                     
                     if (updatedData.dimensions && updatedData.dimensions.length > 0) {
                         console.log("Successfully extracted dimensions:", updatedData.dimensions);
@@ -1891,11 +1927,31 @@ Would you like to get a quote for mylar bags today?`;
                         return;
                     }
                 }
-            } catch (witError) {
-                console.log("Wit.ai extraction failed, trying manual parsing:", witError.message);
+            } catch (aiError) {
+                console.log("ChatGPT extraction failed, trying manual parsing:", aiError.message);
             }
 
-            // If Wit.ai extraction failed, try manual parsing
+            // If ChatGPT extraction failed, try manual parsing - but only for simple dimension responses
+            // Check if this looks like a complex quote request rather than a dimension response
+            const quoteRequestIndicators = ['looking for', 'need', 'want', 'quote', 'pouches', 'bags', 'labels', 'standard size', 'different', 'flavors', 'designs', 'inside'];
+            const isComplexQuoteRequest = quoteRequestIndicators.some(indicator => 
+                messageText.toLowerCase().includes(indicator)
+            );
+            
+            if (isComplexQuoteRequest) {
+                console.log("Detected complex quote request, not parsing as dimensions:", messageText);
+                // This is a quote request, not dimension input - ask for dimensions
+                const product = await conversationService.getProductById(conversationData.selectedProduct.id);
+                if (product && product.dimensionFields) {
+                    const dimensionNames = product.dimensionFields.map(f => f.name);
+                    await this.whatsappService.sendMessage(
+                        from,
+                        `Thank you for your quote request! 📋\n\nTo proceed, I need the dimensions for your **${product.name}**.\n\n📏 Required: **${dimensionNames.join(', ')}**\n\n*Format:* **${dimensionNames.join(' x ')}** (e.g., "${dimensionNames.map(() => '5').join(' x ')}")\n\nAll dimensions should be in inches.`
+                    );
+                }
+                return;
+            }
+            
             const product = await conversationService.getProductById(conversationData.selectedProduct.id);
             if (product && product.dimensionFields) {
                 const dimensionNames = product.dimensionFields.map(f => f.name);
@@ -2204,12 +2260,22 @@ Would you like to get a quote for mylar bags today?`;
         try {
             console.log('🔧 handleMaterialSelection called:', {
                 messageText,
-                hasSelectedMaterial: !!conversationData.selectedMaterial,
+                hasSelectedMaterial: !!conversationData.selectedMaterial?.name,
+                selectedMaterial: conversationData.selectedMaterial,
+                selectedMaterialKeys: Object.keys(conversationData.selectedMaterial || {}),
+                selectedMaterialName: conversationData.selectedMaterial?.name,
                 selectedCategory: conversationData.selectedCategory?.name
             });
             
+            // Check if this message looks like a dimension input (e.g., "8x9", "5x5x5")
+            const isDimensionMessage = this.isDimensionMessage(messageText);
+            
             // If this is the first time in material selection, ask for material
-            if (!conversationData.selectedMaterial) {
+            // OR if the message looks like dimensions (transitioning from dimension_input step)
+            if (!conversationData.selectedMaterial || !conversationData.selectedMaterial.name || isDimensionMessage) {
+                if (isDimensionMessage) {
+                    console.log('🎯 Detected dimension message in material selection step, asking for material:', messageText);
+                }
                 await this.sendMaterialRequest(from, conversationData.selectedCategory);
                 return;
             }
@@ -2583,6 +2649,9 @@ What quantity would you like?`;
                 // Format quantities
                 const quantitiesText = conversationData.quantity?.join(', ') || 'Not specified';
 
+                // Format SKUs
+                const skusText = conversationData.skus ? conversationData.skus.toString() : 'Not specified';
+
                 const acknowledgmentMessage = `Perfect! 🎯 Let me confirm your selections:
 
 📦 **Category:** ${categoryName}
@@ -2591,6 +2660,7 @@ What quantity would you like?`;
 ✨ **Finishes:** ${finishNames}
 📏 **Dimensions:** ${dimensionsText}
 🔢 **Quantities:** ${quantitiesText}
+🎨 **SKUs/Designs:** ${skusText}
 
 Based on the information you've provided, would you like me to generate pricing for your quote? 
 
