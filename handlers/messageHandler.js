@@ -286,10 +286,24 @@ class MessageHandler {
                 return;
             }
 
-            // Check if conversation is already completed
+            // Check if conversation is already completed - handle restart scenarios
             let conversationState = await conversationService.getConversationState(from);
             if (conversationState.conversationData?.completed || conversationState.currentStep === 'completed') {
-                console.log(`⏭️ Conversation already completed for ${from}, skipping text message processing`);
+                console.log(`📝 Conversation completed for ${from}, checking for restart/new quote requests`);
+                
+                // Handle simple restart/greeting messages for completed conversations
+                if (this.isSimpleRestartMessage(messageText)) {
+                    await this.handleCompletedConversationRestart(messageText, from, message.id);
+                    return;
+                }
+                
+                console.log(`⏭️ Conversation already completed and no restart detected, skipping processing`);
+                return;
+            }
+
+            // Check for simple keyword messages that don't need ChatGPT processing
+            if (this.isSimpleKeywordMessage(messageText, conversationState.currentStep)) {
+                await this.handleSimpleKeywordMessage(messageText, from, message.id, conversationState);
                 return;
             }
 
@@ -299,7 +313,27 @@ class MessageHandler {
             
             try {
                 console.log("🤖 Processing message with ChatGPT:", messageText);
-                aiResponse = await this.aiService.processMessage(messageText);
+                
+                // Prepare context for ChatGPT - include available materials if we have a category
+                const context = {};
+                if (conversationState.conversationData?.selectedCategory?.id) {
+                    try {
+                        // Get available materials for the selected category
+                        const Material = (await import('../models/materialModel.js')).Material;
+                        const availableMaterials = await Material.find({ 
+                            categoryId: conversationState.conversationData.selectedCategory.id,
+                            isActive: true 
+                        }).sort({ sortOrder: 1, name: 1 });
+                        
+                        context.availableMaterials = availableMaterials;
+                        context.categoryId = conversationState.conversationData.selectedCategory.id;
+                        console.log(`🧱 Found ${availableMaterials.length} materials for category: ${conversationState.conversationData.selectedCategory.name}`);
+                    } catch (materialError) {
+                        console.error("❌ Error fetching materials for context:", materialError);
+                    }
+                }
+                
+                aiResponse = await this.aiService.processMessage(messageText, context);
                 
                 // Log the complete ChatGPT response
                 console.log("📊 Complete ChatGPT Response:", JSON.stringify(aiResponse, null, 2));
@@ -1154,6 +1188,235 @@ class MessageHandler {
             console.error('Error finding material by name:', error);
             return null;
         }
+    }
+
+    /**
+     * Check if message is a simple restart/greeting after conversation completion
+     */
+    isSimpleRestartMessage(messageText) {
+        const lowerText = messageText.toLowerCase().trim();
+        const restartKeywords = [
+            'hi', 'hello', 'hey', 'restart', 'new quote', 'start over', 
+            'reset', 'begin again', 'fresh quote', 'another quote', 'new order'
+        ];
+        
+        return restartKeywords.some(keyword => 
+            lowerText === keyword || lowerText.includes(keyword)
+        );
+    }
+
+    /**
+     * Handle restart messages for completed conversations
+     */
+    async handleCompletedConversationRestart(messageText, from, messageId) {
+        try {
+            const lowerText = messageText.toLowerCase().trim();
+            
+            // Send comprehensive restart message
+            await this.sendMessageOnce(
+                messageId,
+                from,
+                `Hello! 👋 I'd be happy to help you with a new quote! 
+
+Please share your complete quote details:
+
+📦 **Product Type:** (e.g. stand up pouch, flat pouch, labels, folding cartons)
+📏 **Dimensions:** (e.g. 5x8 inches, 10x12x3 cm)
+🧱 **Material:** (e.g. PET+PE, kraft paper, metallized film)
+🔢 **Quantity:** (e.g. 5000, 10k, 20000 pieces)
+✨ **Finishes:** (e.g. matte, spot UV, foil, holographic)
+🎨 **SKUs/Designs:** (e.g. 1, 2, 4 different designs)
+
+*Example: "I need 10,000 stand up pouches, 6x9 inches, metallized material, spot UV finish, 2 designs"*
+
+Or just say 'hi' to be guided step by step! 😊`
+            );
+
+            // Reset conversation for new quote
+            await conversationService.resetConversation(from);
+            
+        } catch (error) {
+            console.error('Error handling completed conversation restart:', error);
+            await mongoLogger.logError(error, {
+                source: 'completed-conversation-restart',
+                from: from,
+                messageText: messageText
+            });
+        }
+    }
+
+    /**
+     * Check if message contains simple keywords that don't need ChatGPT processing
+     */
+    isSimpleKeywordMessage(messageText, currentStep) {
+        const lowerText = messageText.toLowerCase().trim();
+        
+        // Simple yes/no responses
+        if (['yes', 'no', 'pdf', 'ok', 'okay'].includes(lowerText)) {
+            return true;
+        }
+        
+        // Restart keywords - should always be handled as simple keywords
+        const restartKeywords = ['restart', 'new quote', 'start over', 'reset', 'begin again', 'fresh quote', 'another quote', 'new order'];
+        if (restartKeywords.some(keyword => lowerText === keyword || lowerText.includes(keyword))) {
+            return true;
+        }
+        
+        // Quote generation step specific keywords
+        if (currentStep === 'quote_generation') {
+            const quoteKeywords = ['generate', 'create quote', 'pdf', 'download', 'send quote'];
+            return quoteKeywords.some(keyword => lowerText.includes(keyword));
+        }
+        
+        // Simple greetings in non-start steps
+        if (['hi', 'hello', 'hey'].includes(lowerText) && currentStep !== 'start') {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Handle simple keyword messages without ChatGPT processing
+     */
+    async handleSimpleKeywordMessage(messageText, from, messageId, conversationState) {
+        try {
+            const lowerText = messageText.toLowerCase().trim();
+            const currentStep = conversationState.currentStep;
+            
+            console.log(`🎯 Handling simple keyword: "${lowerText}" in step: ${currentStep}`);
+            
+            // Handle PDF requests in quote_generation step
+            if (currentStep === 'quote_generation' && lowerText.includes('pdf')) {
+                await this.handleQuoteGeneration(messageText, from, conversationState.conversationData, { id: messageId });
+                return;
+            }
+            
+            // Handle yes/no responses based on current step
+            if (lowerText === 'yes') {
+                switch (currentStep) {
+                    case 'greeting_response':
+                        await this.handleGreetingResponse('yes', from, messageId);
+                        break;
+                    case 'quote_generation':
+                        // User confirmed quote details, pass 'yes' to quote generation handler
+                        await this.handleQuoteGeneration('yes', from, conversationState.conversationData, { id: messageId });
+                        break;
+                    default:
+                        await this.sendMessageOnce(
+                            messageId,
+                            from,
+                            "Thank you for confirming! Please provide the specific details I requested above."
+                        );
+                }
+                return;
+            }
+            
+            if (lowerText === 'no') {
+                switch (currentStep) {
+                    case 'greeting_response':
+                        await this.handleGreetingResponse('no', from, messageId);
+                        break;
+                    default:
+                        await this.sendMessageOnce(
+                            messageId,
+                            from,
+                            "No problem! Please let me know how I can help you, or say 'restart' for a new quote."
+                        );
+                }
+                return;
+            }
+            
+            // Handle restart requests
+            const restartKeywords = ['restart', 'new quote', 'start over', 'reset', 'begin again', 'fresh quote', 'another quote', 'new order'];
+            if (restartKeywords.some(keyword => lowerText === keyword || lowerText.includes(keyword))) {
+                console.log(`🔄 User requested restart: "${lowerText}"`);
+                
+                // Send restart message asking for complete quote details
+                await this.sendMessageOnce(
+                    messageId,
+                    from,
+                    `Starting fresh! 🆕 
+
+Please share your complete quote details:
+
+📦 **Product Type:** (e.g. stand up pouch, flat pouch, labels, folding cartons)
+📏 **Dimensions:** (e.g. 5x8 inches, 10x12x3 cm)
+🧱 **Material:** (e.g. PET+PE, kraft paper, metallized film)
+🔢 **Quantity:** (e.g. 5000, 10k, 20000 pieces)
+✨ **Finishes:** (e.g. matte, spot UV, foil, holographic)
+🎨 **SKUs/Designs:** (e.g. 1, 2, 4 different designs)
+
+*Example: "I need 10,000 stand up pouches, 6x9 inches, metallized material, spot UV finish, 2 designs"*
+
+Or just say 'hi' to be guided step by step! 😊`
+                );
+                
+                // Reset conversation
+                await conversationService.resetConversation(from);
+                return;
+            }
+
+            // Handle simple greetings in middle of conversation
+            if (['hi', 'hello', 'hey'].includes(lowerText)) {
+                await this.sendContextualGreeting(from, messageId, currentStep, conversationState.conversationData);
+                return;
+            }
+            
+            // Handle other simple keywords
+            if (['ok', 'okay'].includes(lowerText)) {
+                await this.sendMessageOnce(
+                    messageId,
+                    from,
+                    "Great! Please provide the information I requested above to continue with your quote."
+                );
+                return;
+            }
+            
+        } catch (error) {
+            console.error('Error handling simple keyword message:', error);
+            await mongoLogger.logError(error, {
+                source: 'simple-keyword-handler',
+                from: from,
+                messageText: messageText,
+                currentStep: conversationState.currentStep
+            });
+        }
+    }
+
+    /**
+     * Send contextual greeting based on current conversation step
+     */
+    async sendContextualGreeting(from, messageId, currentStep, conversationData) {
+        let message = "Hello! 👋 ";
+        
+        switch (currentStep) {
+            case 'category_selection':
+                message += "I'm waiting for you to select a product category from the list above.";
+                break;
+            case 'product_selection':
+                message += `I'm waiting for you to select a product from the ${conversationData?.selectedCategory?.name || 'selected'} category.`;
+                break;
+            case 'dimension_input':
+                message += `I need the dimensions for your ${conversationData?.selectedProduct?.name || 'selected product'}.`;
+                break;
+            case 'material_selection':
+                message += "I'm waiting for you to select the material for your product.";
+                break;
+            case 'finish_selection':
+                message += "I'm waiting for you to select the finish options for your product.";
+                break;
+            case 'quantity_input':
+                message += "I need to know the quantity you're looking for.";
+                break;
+            case 'quote_generation':
+                message += "I have all your details! Say 'pdf' to generate your quote.";
+                break;
+            default:
+                message += "I'm here to help with your quote request. Please provide the details I asked for above.";
+        }
+        
+        await this.sendMessageOnce(messageId, from, message);
     }
 
     /**
@@ -2546,10 +2809,44 @@ Would you like to get a quote for mylar bags today?`;
                 selectedMaterial = materials[listPosition - 1];
                 console.log(`🔢 User selected material by number ${listPosition}: ${selectedMaterial.name}`);
             } else {
-                // Try exact match first in category materials
-                selectedMaterial = materials.find(m =>
-                    m.name.toLowerCase() === messageText.toLowerCase()
-                );
+                // Special handling for "metallized" - map to MPET materials
+                if (messageText.toLowerCase().includes('metallized') || messageText.toLowerCase().includes('metallic')) {
+                    console.log('🎯 Special handling for metallized material request');
+                    
+                    // Look for materials containing MPET in order of preference
+                    const mpetMaterials = [
+                        'PET +  MPET + PE',  // Exact match from logs
+                        'PET + MPET + PE',   // Without extra spaces
+                        'Kraft + MPET +PE',  // Alternative
+                    ];
+                    
+                    for (const preferredMaterial of mpetMaterials) {
+                        selectedMaterial = materials.find(m => 
+                            m.name.toLowerCase() === preferredMaterial.toLowerCase()
+                        );
+                        if (selectedMaterial) {
+                            console.log(`🎯 Mapped "metallized" to: ${selectedMaterial.name}`);
+                            break;
+                        }
+                    }
+                    
+                    // If exact names don't match, look for any material containing MPET
+                    if (!selectedMaterial) {
+                        selectedMaterial = materials.find(m => 
+                            m.name.toLowerCase().includes('mpet')
+                        );
+                        if (selectedMaterial) {
+                            console.log(`🎯 Mapped "metallized" to MPET material: ${selectedMaterial.name}`);
+                        }
+                    }
+                }
+                
+                // Try exact match first in category materials (if not already found above)
+                if (!selectedMaterial) {
+                    selectedMaterial = materials.find(m =>
+                        m.name.toLowerCase() === messageText.toLowerCase()
+                    );
+                }
                 
                 // If no exact match, try partial matching in category materials
                 if (!selectedMaterial) {
@@ -2633,44 +2930,30 @@ Would you like to get a quote for mylar bags today?`;
                 const mockMessage = { id: 'material-found-' + Date.now() };
                 await this.processConversationFlow(mockMessage, messageText, from, updatedState);
             } else {
-                // If no material found in database, create a custom material entry to keep conversation flowing
-                console.log(`🔧 No material found for "${messageText}", creating custom material entry`);
+                // Material not found - show available materials instead of creating custom ones
+                console.log(`❌ Material "${messageText}" not found in database, showing available options`);
                 
-                // Send confirmation with custom material
+                // Format available materials list
+                const materialsList = materials.map((material, index) => 
+                    `${index + 1}. ${material.name}`
+                ).join('\n');
+                
+                // Send message with available materials
                 await this.whatsappService.sendMessage(
                     from,
-                    `✅ Great! I've noted *${messageText}* as your material choice.\n\nMoving to the next step...`
+                    `❌ I couldn't find "${messageText}" in our materials database.
+
+Here are the available materials for ${category.name}:
+
+${materialsList}
+
+Please select a material by:
+• Typing the exact material name
+• Or typing the number (e.g., "1" for ${materials[0]?.name || 'first option'})
+
+*Note: We only use materials from our database to ensure accurate pricing and availability.*`
                 );
-                
-                // Create custom material entry
-                const customMaterial = {
-                    _id: `custom_${Date.now()}`,
-                    name: messageText,
-                    erp_id: 0, // Custom materials get 0 as ERP ID
-                    isCustom: true
-                };
-                
-                // Update conversation data with custom material as array
-                await conversationService.updateConversationState(from, {
-                    'conversationData.selectedMaterial': [customMaterial]
-                });
-
-                // Get updated conversation data and determine next step
-                const updatedConversationData = { 
-                    ...conversationData, 
-                    selectedMaterial: [customMaterial] 
-                };
-                
-                const nextStep = this.getNextStepAfterBypass('material_selection', updatedConversationData);
-
-                await conversationService.updateConversationState(from, {
-                    currentStep: nextStep
-                });
-
-                // Process the next step
-                const updatedState = await conversationService.getConversationState(from);
-                const mockMessage = { id: 'material-selection-' + Date.now() };
-                await this.processConversationFlow(mockMessage, messageText, from, updatedState);
+                return; // Don't proceed to next step
             }
         } catch (error) {
             console.error('Error in handleMaterialSelection:', error);
@@ -2947,10 +3230,16 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                 // Process user's response
                 const response = messageText.toLowerCase().trim();
                 const safeMessageId = message?.id || 'quote-response-' + Date.now();
+                
+                console.log(`🎯 Processing user response: "${response}"`);
+                console.log(`🎯 pricing_done: ${conversationData.pricing_done}, wantsPdf: ${conversationData.wantsPdf}`);
+                console.log(`🎯 pricing_done type: ${typeof conversationData.pricing_done}`);
+                console.log(`🎯 Condition 1 (pricing_done && !wantsPdf): ${conversationData.pricing_done && !conversationData.wantsPdf}`);
+                console.log(`🎯 Condition 2 (!pricing_done): ${!conversationData.pricing_done}`);
 
                 // Check if user is responding to document request after pricing is done
                 if (conversationData.pricing_done && !conversationData.wantsPdf) {
-                    if (response.includes('pdf') || response.includes('quote')) {
+                    if (response.includes('pdf') || response.includes('yes') || response.includes('generate')) {
                         // Check if already completed to prevent duplicate processing
                         if (conversationData.completed) {
                             console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate PDF generation`);
@@ -2971,73 +3260,6 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                             `✅ **Quote Complete!** 
 
 Thank you for using our quote system! Your PDF quote has been generated and sent.
-
-Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
-                        );
-
-                        // Mark as fully completed
-                        await conversationService.updateConversationState(from, {
-                            'conversationData.completed': true,
-                            currentStep: 'completed',
-                            isActive: false
-                        });
-
-                    } else if (response.includes('psf') || response.includes('specification') || response.includes('spec')) {
-                        // Check if already completed to prevent duplicate processing
-                        if (conversationData.completed) {
-                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate PSF generation`);
-                            return;
-                        }
-
-                        // User wants PSF, generate and send it
-                        await conversationService.updateConversationState(from, {
-                            'conversationData.wantsPsf': true
-                        });
-
-                        await this.generateAndSendPSF(from, conversationData, safeMessageId);
-                        
-                        // Send completion message
-                        await this.sendMessageOnce(
-                            safeMessageId,
-                            from,
-                            `✅ **Specification Complete!** 
-
-Thank you for using our quote system! Your PSF (Product Specification Form) has been generated and sent.
-
-Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
-                        );
-
-                        // Mark as fully completed
-                        await conversationService.updateConversationState(from, {
-                            'conversationData.completed': true,
-                            currentStep: 'completed',
-                            isActive: false
-                        });
-
-                    } else if (response.includes('both')) {
-                        // Check if already completed to prevent duplicate processing
-                        if (conversationData.completed) {
-                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate document generation`);
-                            return;
-                        }
-
-                        // User wants both documents
-                        await conversationService.updateConversationState(from, {
-                            'conversationData.wantsPdf': true,
-                            'conversationData.wantsPsf': true
-                        });
-
-                        // Generate and send both documents
-                        await this.generateAndSendPDF(from, conversationData, safeMessageId + '_pdf');
-                        await this.generateAndSendPSF(from, conversationData, safeMessageId + '_psf');
-                        
-                        // Send completion message
-                        await this.sendMessageOnce(
-                            safeMessageId,
-                            from,
-                            `✅ **Documents Complete!** 
-
-Thank you for using our quote system! Both your PDF quote and PSF (Product Specification Form) have been generated and sent.
 
 Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         );
@@ -3078,10 +3300,11 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         await this.sendMessageOnce(
                             safeMessageId,
                             from,
-                            `📄 What document would you like?\n\n• Reply "PDF" for detailed quote\n• Reply "PSF" for Product Specification Form\n• Reply "Both" for both documents\n• Reply "No" to finish`
+                            `📄 Would you like me to generate a PDF quote for you?\n\n• Reply "Yes" or "PDF" to get your quote\n• Reply "No" to finish without the document`
                         );
                     }
                 } else if (!conversationData.pricing_done) {
+                    console.log(`🎯 Taking pricing branch - pricing not done yet`);
                     // Check if user is providing additional information (like SKUs) before confirming
                     if (messageText.toLowerCase().includes('sku') && !response.includes('yes') && !response.includes('no')) {
                         // Extract SKU information
@@ -3133,6 +3356,8 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                     }
                     
                     // User is responding to initial pricing question
+                    console.log(`🔍 Checking pricing response: "${response}" vs "yes"`);
+                    console.log(`🔍 pricing_done: ${conversationData.pricing_done}, includes yes: ${response.includes('yes')}`);
                     if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
                         // User wants pricing, generate and send quote
                         try {
@@ -3216,6 +3441,7 @@ Have a great day! 🌟`;
                         }
                     }
                 } else {
+                    console.log(`🎯 Taking fallback branch - pricing done but unclear response`);
                     // Unclear response, ask for clarification
                     await this.sendMessageOnce(
                         message.id,
@@ -3361,12 +3587,10 @@ Have a great day! 🌟`;
             
             pricingMessage += `\n✨ **Best Value:** Tier ${qty.length} at $${unit_cost[qty.length - 1].toFixed(3)} per unit\n\n`;
             
-            // Ask for PDF or PSF
-            pricingMessage += `📄 Would you like me to generate documents for your records?\n\n`;
-            pricingMessage += `• Reply "PDF" for detailed quote with pricing\n`;
-            pricingMessage += `• Reply "PSF" for Product Specification Form\n`;
-            pricingMessage += `• Reply "Both" for both documents\n`;
-            pricingMessage += `• Reply "No" to finish`;
+            // Ask for PDF quote
+            pricingMessage += `📄 Would you like me to generate a detailed PDF quote for your records?\n\n`;
+            pricingMessage += `• Reply "Yes" or "PDF" to get your quote document\n`;
+            pricingMessage += `• Reply "No" to finish without the document`;
 
             if (messageId) {
                 await this.sendMessageOnce(messageId, from, pricingMessage);
@@ -3388,10 +3612,9 @@ Have a great day! 🌟`;
                 "Here's your pricing information:\n\n" +
                 `Quantities: ${pricingData.qty.join(', ')}\n` +
                 `Unit Costs: $${pricingData.unit_cost.join(', $')}\n\n` +
-                "📄 What document would you like?\n" +
-                "• Reply 'PDF' for quote\n" +
-                "• Reply 'PSF' for specifications\n" +
-                "• Reply 'Both' or 'No'"
+                "📄 Would you like a PDF quote?\n" +
+                "• Reply 'Yes' or 'PDF' for your quote\n" +
+                "• Reply 'No' to finish"
             );
         }
     }

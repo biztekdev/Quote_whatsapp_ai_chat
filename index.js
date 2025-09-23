@@ -268,25 +268,27 @@ async function processMessagesAsync(webhookData, startTime) {
                             continue; // Skip this message
                         }
 
-                        // STEP 2: Send instant acknowledgment ONLY for new text messages
+                        // STEP 2: Send instant acknowledgment ONLY for new text messages (except restart messages)
                         if (isNewMessage && messageType === 'text' && message.text?.body) {
-                            try {
-                                const acknowledgmentMessages = [
-                                    "🚀 Got your message! I'm analyzing your requirements...",
-                                    "📝 Thanks for reaching out! Processing your request now...",
-                                    "⚡ Message received! Let me get your quote ready...",
-                                    "👋 Hello! I'm working on your quote request...",
-                                    "🔄 Processing your request... Please give me a moment!"
-                                ];
-                                
-                                const randomMessage = acknowledgmentMessages[Math.floor(Math.random() * acknowledgmentMessages.length)];
-                                
-                                console.log(`📤 [${messageProcessingId}] Sending instant acknowledgment to ${from}`);
-                                await whatsappService.sendMessage(from, randomMessage);
-                                console.log(`✅ [${messageProcessingId}] Instant acknowledgment sent successfully`);
-                            } catch (ackError) {
-                                console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
-                                // Continue with processing even if acknowledgment fails
+                            const messageText = message.text.body.toLowerCase().trim();
+                            const isRestartMessage = ['restart', 'new quote', 'start over', 'reset', 'begin again', 'fresh quote', 'another quote', 'new order'].some(keyword => 
+                                messageText === keyword || messageText.includes(keyword)
+                            );
+                            
+                            // Skip instant acknowledgment for restart messages
+                            if (!isRestartMessage) {
+                                try {
+                                    const acknowledgmentMessage = "📝 Thanks for your message! I'm processing your request...";
+                                    
+                                    console.log(`📤 [${messageProcessingId}] Sending instant acknowledgment to ${from}`);
+                                    await whatsappService.sendMessage(from, acknowledgmentMessage);
+                                    console.log(`✅ [${messageProcessingId}] Instant acknowledgment sent successfully`);
+                                } catch (ackError) {
+                                    console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
+                                    // Continue with processing even if acknowledgment fails
+                                }
+                            } else {
+                                console.log(`⏭️ [${messageProcessingId}] Skipping instant acknowledgment for restart message: "${messageText}"`);
                             }
                         }
 

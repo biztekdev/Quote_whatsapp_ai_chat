@@ -41,15 +41,19 @@ class ChatGPTService {
   /**
    * Process a message for entity extraction (similar to Wit.ai processMessage)
    * @param {string} message - The user's message
+   * @param {Object} context - Additional context (categoryId, availableMaterials, etc.)
    * @returns {Object} Similar to Wit.ai response format for compatibility
    */
-  async processMessage(message) {
+  async processMessage(message, context = {}) {
     this._checkEnabled();
     
     try {
       console.log('🤖 Processing message with ChatGPT:', message);
+      if (context.availableMaterials) {
+        console.log('🧱 Available materials for constraint:', context.availableMaterials.map(m => m.name));
+      }
       
-      const extractedData = await this.extractEntities(message);
+      const extractedData = await this.extractEntities(message, context);
       
       if (!extractedData.success) {
         throw new Error(extractedData.error);
@@ -81,16 +85,34 @@ class ChatGPTService {
   /**
    * Extract entities from a quote request message using ChatGPT
    * @param {string} message - The user's message
+   * @param {Object} context - Additional context (categoryId, availableMaterials, etc.)
    * @returns {Object} Extracted entities
    */
-  async extractEntities(message) {
+  async extractEntities(message, context = {}) {
     this._checkEnabled();
     
     try {
+      // Build materials constraint based on available materials
+      let materialsConstraint = '';
+      if (context.availableMaterials && context.availableMaterials.length > 0) {
+        const materialsList = context.availableMaterials.map(m => `"${m.name}"`).join(', ');
+        materialsConstraint = `
+
+IMPORTANT - MATERIALS CONSTRAINT:
+You MUST only select materials from this exact list: [${materialsList}]
+- Do NOT create custom material names
+- Do NOT use materials not in this list
+- If user mentions "metallized", find materials containing "MPET" from the list
+- If user mentions "foil", find materials containing "Foil" from the list
+- Always return the EXACT material name from the available list
+- If no match is found, return null for materials
+- Match user input to the closest material name from the available list`;
+      }
+
       const prompt = `
 You are an expert at extracting product specification data from quote requests for packaging materials like mylar bags, labels, folding cartons, stand up pouches, etc.
 
-Extract information from this message: "${message}"
+Extract information from this message: "${message}"${materialsConstraint}
 
 Return a JSON object with these fields (use null if not mentioned):
 {
