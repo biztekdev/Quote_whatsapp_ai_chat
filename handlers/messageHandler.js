@@ -994,14 +994,62 @@ class MessageHandler {
                 return foundMaterial;
             }
             
-            // If not found in description, try searching for individual parts (for composite materials like "PET + MPET + PE")
+            // If not found in description, try searching for composite materials like "PET+MET+PE" or "PET + MPET + PE"
             if (!foundMaterial) {
-                const materialParts = materialName.split('+').map(part => part.trim());
-                for (const part of materialParts) {
-                    foundMaterial = materials.find(material =>
-                        material.name.toLowerCase().includes(part.toLowerCase())
+                console.log("🔍 Trying composite material search for:", materialName);
+                
+                // Split by common separators: +, -, space, etc.
+                const materialParts = materialName.split(/[+\-\s,]+/).map(part => part.trim().toUpperCase()).filter(part => part.length > 0);
+                console.log("🔍 Material parts:", materialParts);
+                
+                // Try to find a material that contains all the parts
+                foundMaterial = materials.find(material => {
+                    const materialNameUpper = material.name.toUpperCase();
+                    const allPartsPresent = materialParts.every(part => 
+                        materialNameUpper.includes(part)
                     );
-                    if (foundMaterial) break;
+                    console.log(`🔍 Checking material "${material.name}" against parts [${materialParts.join(', ')}]: ${allPartsPresent}`);
+                    return allPartsPresent;
+                });
+                
+                // If no material contains all parts, try to find one with most parts
+                if (!foundMaterial && materialParts.length > 1) {
+                    console.log("🔍 No exact composite match, trying partial composite match");
+                    let bestMatch = null;
+                    let maxMatches = 0;
+                    
+                    for (const material of materials) {
+                        const materialNameUpper = material.name.toUpperCase();
+                        const matches = materialParts.filter(part => 
+                            materialNameUpper.includes(part)
+                        ).length;
+                        
+                        console.log(`🔍 Material "${material.name}" matches ${matches}/${materialParts.length} parts`);
+                        
+                        if (matches > maxMatches && matches >= Math.ceil(materialParts.length / 2)) {
+                            maxMatches = matches;
+                            bestMatch = material;
+                        }
+                    }
+                    
+                    if (bestMatch) {
+                        foundMaterial = bestMatch;
+                        console.log(`🎯 Best composite match: ${bestMatch.name} (${maxMatches}/${materialParts.length} parts)`);
+                    }
+                }
+                
+                // Fallback: try finding any material containing any of the parts
+                if (!foundMaterial) {
+                    console.log("🔍 Trying fallback search for any part");
+                    for (const part of materialParts) {
+                        foundMaterial = materials.find(material =>
+                            material.name.toUpperCase().includes(part)
+                        );
+                        if (foundMaterial) {
+                            console.log(`🎯 Found material containing "${part}": ${foundMaterial.name}`);
+                            break;
+                        }
+                    }
                 }
             }
             
@@ -2313,13 +2361,25 @@ Would you like to get a quote for mylar bags today?`;
             // Check if this message looks like a dimension input (e.g., "8x9", "5x5x5")
             const isDimensionMessage = this.isDimensionMessage(messageText);
             
-            // If this is the first time in material selection, ask for material
-            // OR if the message looks like dimensions (transitioning from dimension_input step)
-            if (!conversationData.selectedMaterial || conversationData.selectedMaterial.length === 0 || isDimensionMessage) {
-                if (isDimensionMessage) {
-                    console.log('🎯 Detected dimension message in material selection step, asking for material:', messageText);
-                }
+            // Check if we already have material selected
+            const hasMaterial = conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0;
+            
+            // If message looks like dimensions (transitioning from dimension_input step), ask for material
+            if (isDimensionMessage) {
+                console.log('🎯 Detected dimension message in material selection step, asking for material:', messageText);
                 await this.sendMaterialRequest(from, conversationData.selectedCategory);
+                return;
+            }
+            
+            // If we already have material, we shouldn't be here - move to next step
+            if (hasMaterial) {
+                console.log('🎯 Material already selected, moving to next step');
+                const nextStep = this.getNextStepAfterBypass('material_selection', conversationData);
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(null, messageText, from, updatedState);
                 return;
             }
 
@@ -2360,12 +2420,12 @@ Would you like to get a quote for mylar bags today?`;
                 selectedMaterial = materials[listPosition - 1];
                 console.log(`🔢 User selected material by number ${listPosition}: ${selectedMaterial.name}`);
             } else {
-                // Try exact match first
+                // Try exact match first in category materials
                 selectedMaterial = materials.find(m =>
                     m.name.toLowerCase() === messageText.toLowerCase()
                 );
                 
-                // If no exact match, try partial matching
+                // If no exact match, try partial matching in category materials
                 if (!selectedMaterial) {
                     selectedMaterial = materials.find(m =>
                         m.name.toLowerCase().includes(messageText.toLowerCase()) ||
@@ -2373,7 +2433,7 @@ Would you like to get a quote for mylar bags today?`;
                     );
                 }
                 
-                // If still no match, try matching individual words for complex descriptions
+                // Try matching individual words for complex descriptions in category materials
                 if (!selectedMaterial) {
                     const messageWords = messageText.toLowerCase().split(/[\s,+\-_]+/).filter(word => word.length > 2);
                     selectedMaterial = materials.find(m => {
@@ -2384,6 +2444,23 @@ Would you like to get a quote for mylar bags today?`;
                             )
                         );
                     });
+                }
+                
+                // If still not found in category materials, search across ALL materials
+                if (!selectedMaterial) {
+                    console.log(`🔍 Material not found in category, searching across all materials for: ${messageText}`);
+                    selectedMaterial = await this.findMaterialByName(messageText);
+                    
+                    if (selectedMaterial) {
+                        console.log(`🎯 Found material across all materials: ${selectedMaterial.name}`);
+                        // Convert to the expected format to match category materials structure
+                        selectedMaterial = {
+                            _id: selectedMaterial._id,
+                            name: selectedMaterial.name,
+                            erp_id: selectedMaterial.erp_id,
+                            description: selectedMaterial.description
+                        };
+                    }
                 }
             }
             
@@ -2429,40 +2506,43 @@ Would you like to get a quote for mylar bags today?`;
                 const updatedState = await conversationService.getConversationState(from);
                 await this.processConversationFlow(null, messageText, from, updatedState);
             } else {
-                // Get current conversation data to show what we already have
-                const conversationState = await conversationService.getConversationState(from);
-                const conversationData = conversationState.conversationData || {};
+                // If no material found in database, create a custom material entry to keep conversation flowing
+                console.log(`🔧 No material found for "${messageText}", creating custom material entry`);
                 
-                // Build acknowledgment message with collected details
-                let acknowledgmentText = "I have the following details from your message:\n\n";
-                
-                if (conversationData.selectedProduct) {
-                    acknowledgmentText += `• Product: ${conversationData.selectedProduct.name}\n`;
-                }
-                
-                if (conversationData.quantity && conversationData.quantity.length > 0) {
-                    const quantity = conversationData.quantity[0];
-                    acknowledgmentText += `• Quantity: ${quantity.toLocaleString()} pieces\n`;
-                }
-                
-                if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
-                    const finishNames = conversationData.selectedFinish.map(f => f.name).join(', ');
-                    acknowledgmentText += `• Finishes: ${finishNames}\n`;
-                }
-                
-                if (conversationData.skus) {
-                    acknowledgmentText += `• SKUs: ${conversationData.skus}\n`;
-                }
-                
-                // Show available materials to help user
-                const availableMaterialsList = materials.map((m, index) => `${index + 1}. ${m.name}`).join('\n');
-                
-                acknowledgmentText += `\nI couldn't find a material named "${messageText}".\n\nAvailable materials for ${category.name}:\n${availableMaterialsList}\n\nPlease type the *number* (e.g., "7") or the full material name from the list above.`;
-                
+                // Send confirmation with custom material
                 await this.whatsappService.sendMessage(
                     from,
-                    acknowledgmentText
+                    `✅ Great! I've noted *${messageText}* as your material choice.\n\nMoving to the next step...`
                 );
+                
+                // Create custom material entry
+                const customMaterial = {
+                    _id: `custom_${Date.now()}`,
+                    name: messageText,
+                    erp_id: 0, // Custom materials get 0 as ERP ID
+                    isCustom: true
+                };
+                
+                // Update conversation data with custom material as array
+                await conversationService.updateConversationState(from, {
+                    'conversationData.selectedMaterial': [customMaterial]
+                });
+
+                // Get updated conversation data and determine next step
+                const updatedConversationData = { 
+                    ...conversationData, 
+                    selectedMaterial: [customMaterial] 
+                };
+                
+                const nextStep = this.getNextStepAfterBypass('material_selection', updatedConversationData);
+
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+
+                // Process the next step
+                const updatedState = await conversationService.getConversationState(from);
+                await this.processConversationFlow(null, messageText, from, updatedState);
             }
         } catch (error) {
             console.error('Error in handleMaterialSelection:', error);
