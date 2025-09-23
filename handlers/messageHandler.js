@@ -2738,9 +2738,9 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
                 // Process user's response
                 const response = messageText.toLowerCase().trim();
 
-                // Check if user is responding to PDF request after pricing is done
+                // Check if user is responding to document request after pricing is done
                 if (conversationData.pricing_done && !conversationData.wantsPdf) {
-                    if (response.includes('yes') || response.includes('y') || response.includes('sure') || response.includes('ok')) {
+                    if (response.includes('pdf') || response.includes('quote')) {
                         // Check if already completed to prevent duplicate processing
                         if (conversationData.completed) {
                             console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate PDF generation`);
@@ -2754,13 +2754,80 @@ Please reply with "Yes" to get pricing details, or "No" if you'd like to make an
 
                         await this.generateAndSendPDF(from, conversationData, message.id);
                         
-                        // Send completion message using sendMessageOnce to prevent duplicates
+                        // Send completion message
                         await this.sendMessageOnce(
                             message.id,
                             from,
                             `✅ **Quote Complete!** 
 
-Thank you for using our quote system! Your PDF has been generated and sent.
+Thank you for using our quote system! Your PDF quote has been generated and sent.
+
+Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
+                        );
+
+                        // Mark as fully completed
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.completed': true,
+                            currentStep: 'completed',
+                            isActive: false
+                        });
+
+                    } else if (response.includes('psf') || response.includes('specification') || response.includes('spec')) {
+                        // Check if already completed to prevent duplicate processing
+                        if (conversationData.completed) {
+                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate PSF generation`);
+                            return;
+                        }
+
+                        // User wants PSF, generate and send it
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.wantsPsf': true
+                        });
+
+                        await this.generateAndSendPSF(from, conversationData, message.id);
+                        
+                        // Send completion message
+                        await this.sendMessageOnce(
+                            message.id,
+                            from,
+                            `✅ **Specification Complete!** 
+
+Thank you for using our quote system! Your PSF (Product Specification Form) has been generated and sent.
+
+Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
+                        );
+
+                        // Mark as fully completed
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.completed': true,
+                            currentStep: 'completed',
+                            isActive: false
+                        });
+
+                    } else if (response.includes('both')) {
+                        // Check if already completed to prevent duplicate processing
+                        if (conversationData.completed) {
+                            console.log(`⏭️ Conversation already completed for ${from}, skipping duplicate document generation`);
+                            return;
+                        }
+
+                        // User wants both documents
+                        await conversationService.updateConversationState(from, {
+                            'conversationData.wantsPdf': true,
+                            'conversationData.wantsPsf': true
+                        });
+
+                        // Generate and send both documents
+                        await this.generateAndSendPDF(from, conversationData, message.id + '_pdf');
+                        await this.generateAndSendPSF(from, conversationData, message.id + '_psf');
+                        
+                        // Send completion message
+                        await this.sendMessageOnce(
+                            message.id,
+                            from,
+                            `✅ **Documents Complete!** 
+
+Thank you for using our quote system! Both your PDF quote and PSF (Product Specification Form) have been generated and sent.
 
 Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                         );
@@ -2797,11 +2864,11 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                             isActive: false
                         });
                     } else {
-                        // Unclear response to PDF question
+                        // Unclear response to document question
                         await this.sendMessageOnce(
                             message.id,
                             from,
-                            "Would you like a PDF quote? Please reply with 'Yes' for PDF or 'No' to finish."
+                            `📄 What document would you like?\n\n• Reply "PDF" for detailed quote\n• Reply "PSF" for Product Specification Form\n• Reply "Both" for both documents\n• Reply "No" to finish`
                         );
                     }
                 } else if (!conversationData.pricing_done) {
@@ -2972,7 +3039,8 @@ Have a great day! 🌟`;
             const payload = {
                 file_type: conversationData.selectedCategory?.erp_id?.toString() || "1",
                 product_id: conversationData.selectedProduct?.erp_id || 26,
-                material_id: conversationData.selectedMaterial?._id || 55,
+                // material_id: conversationData.selectedMaterial?._id || 55,
+                material_id: 55,
                 finishes: conversationData.selectedFinish?.map(finish => {
                     console.log("Processing finish:", finish);
                     const finishId = parseInt(finish._id);
@@ -3084,9 +3152,12 @@ Have a great day! 🌟`;
             
             pricingMessage += `\n✨ **Best Value:** Tier ${qty.length} at $${unit_cost[qty.length - 1].toFixed(3)} per unit\n\n`;
             
-            // Ask for PDF
-            pricingMessage += `📄 Would you like me to generate a detailed PDF quote for your records?\n\n`;
-            pricingMessage += `Reply with "Yes" for PDF or "No" to finish.`;
+            // Ask for PDF or PSF
+            pricingMessage += `📄 Would you like me to generate documents for your records?\n\n`;
+            pricingMessage += `• Reply "PDF" for detailed quote with pricing\n`;
+            pricingMessage += `• Reply "PSF" for Product Specification Form\n`;
+            pricingMessage += `• Reply "Both" for both documents\n`;
+            pricingMessage += `• Reply "No" to finish`;
 
             if (messageId) {
                 await this.sendMessageOnce(messageId, from, pricingMessage);
@@ -3108,7 +3179,66 @@ Have a great day! 🌟`;
                 "Here's your pricing information:\n\n" +
                 `Quantities: ${pricingData.qty.join(', ')}\n` +
                 `Unit Costs: $${pricingData.unit_cost.join(', $')}\n\n` +
-                "Would you like a PDF quote? Reply Yes or No."
+                "📄 What document would you like?\n" +
+                "• Reply 'PDF' for quote\n" +
+                "• Reply 'PSF' for specifications\n" +
+                "• Reply 'Both' or 'No'"
+            );
+        }
+    }
+
+    async generateAndSendPSF(from, conversationData, messageId = null) {
+        try {
+            console.log("Generating PSF for:", from);
+            console.log("Conversation data for PSF:", JSON.stringify(conversationData, null, 2));
+            
+            // Create PSF document using PDFKit
+            console.log("Creating PSF document...");
+            const psfBuffer = await this.createPSFDocument(conversationData);
+            console.log("PSF document created, buffer size:", psfBuffer.length);
+            
+            // For Vercel compatibility, try buffer approach first
+            try {
+                console.log("Attempting to send PSF via buffer...");
+                // Send PSF directly from buffer (Vercel-friendly)
+                await this.whatsappService.sendDocument(from, {
+                    buffer: psfBuffer,
+                    filename: `PSF_${Date.now()}.pdf`,
+                    caption: "📋 Here's your Product Specification Form (PSF)!"
+                });
+                
+                console.log("PSF sent successfully via buffer to:", from);
+                
+            } catch (bufferError) {
+                console.error("Buffer upload failed:", bufferError);
+                console.log("Trying file approach...");
+                
+                // Fallback to file approach
+                const tempPath = await this.createTempPDF(psfBuffer, from, 'PSF');
+                console.log("Temp PSF created at:", tempPath);
+                
+                // Send PSF via WhatsApp
+                await this.whatsappService.sendDocument(from, {
+                    link: tempPath,
+                    filename: `PSF_${Date.now()}.pdf`,
+                    caption: "📋 Here's your Product Specification Form (PSF)!"
+                });
+                
+                console.log("PSF sent successfully via file to:", from);
+            }
+            
+        } catch (error) {
+            console.error('Error generating/sending PSF:', error);
+            await mongoLogger.logError(error, {
+                source: 'psf-generation',
+                from: from
+            });
+            
+            // Fallback message
+            await this.sendMessageOnce(
+                messageId || 'psf-error',
+                from,
+                "Sorry, I couldn't generate the PSF at the moment. However, you have all the product specification information above. Please contact our support if you need assistance."
             );
         }
     }
@@ -3169,6 +3299,344 @@ Have a great day! 🌟`;
         }
     }
 
+    async createPSFDocument(conversationData) {
+        try {
+            console.log("Starting PSF creation...");
+            console.log("Conversation data:", JSON.stringify(conversationData, null, 2));
+            
+            // Import PDFKit dynamically
+            console.log("Importing PDFKit...");
+            const PDFDocument = (await import('pdfkit')).default;
+            console.log("PDFKit imported successfully");
+            
+            const doc = new PDFDocument({ 
+                size: 'A4',
+                margin: 0,
+                layout: 'portrait'
+            });
+            const chunks = [];
+            
+            // Collect PDF data
+            doc.on('data', chunk => chunks.push(chunk));
+            doc.on('end', () => {
+                console.log("PSF generation completed");
+            });
+            
+            const pageWidth = doc.page.width;
+            const pageHeight = doc.page.height;
+            
+            // Set up colors
+            const primaryColor = '#000000';
+            const secondaryColor = '#333333';
+            const accentColor = '#0066CC'; // Blue for PSF highlights
+            const headerColor = '#F0F8FF'; // Light blue header background
+            
+            // Background
+            doc.rect(0, 0, pageWidth, pageHeight).fill('#FFFFFF');
+            
+            // Header background
+            doc.rect(0, 0, pageWidth, 120).fill(headerColor);
+            
+            // Vertical PSF text on the left
+            doc.save()
+               .translate(30, 120)
+               .rotate(-90)
+               .fontSize(48)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('PSF', 0, 0)
+               .restore();
+            
+            // Header section with logo area
+            const headerY = 30;
+            const contentStartX = 120;
+            
+            // Company logo using logo.png image
+            try {
+                const fs = await import('fs/promises');
+                const path = await import('path');
+                
+                // Get the absolute path to the logo image
+                const logoPath = path.join(process.cwd(), 'public', 'logo.png');
+                
+                // Check if logo exists
+                await fs.access(logoPath);
+                
+                // Add the logo.png image in PSF header
+                doc.image(logoPath, contentStartX, headerY - 10, {
+                    width: 120,
+                    height: 50
+                });
+                
+            } catch (logoError) {
+                console.log('Could not load logo.png for PSF, falling back to text');
+                // Fallback to text if logo fails
+                doc.fontSize(28)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Print247', contentStartX, headerY)
+                   .fontSize(18)
+                   .font('Helvetica')
+                   .text('.us', contentStartX + 100, headerY + 5);
+            }
+            
+            // PSF Title
+            doc.fontSize(24)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('Product Specification Form', contentStartX, headerY + 40);
+            
+            // Document info
+            doc.fontSize(12)
+               .fillColor(secondaryColor)
+               .font('Helvetica')
+               .text(`PSF No: PSF-${Date.now()}`, contentStartX, headerY + 70)
+               .text(`Date: ${new Date().toLocaleDateString('en-US')}`, pageWidth - 150, headerY + 70);
+            
+            // Main content area
+            let currentY = 150;
+            const leftCol = contentStartX;
+            const rightCol = contentStartX + 250;
+            const lineHeight = 25;
+            
+            // Product Information Section
+            doc.fontSize(16)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('📦 PRODUCT INFORMATION', leftCol, currentY);
+            
+            currentY += 35;
+            
+            // Draw section border
+            doc.rect(leftCol - 10, currentY - 10, pageWidth - leftCol - 40, 200)
+               .stroke('#E0E0E0');
+            
+            const productInfo = [
+                ['Category:', conversationData.selectedCategory?.name || 'Not specified'],
+                ['Product Type:', conversationData.selectedProduct?.name || 'Not specified'],
+                ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
+                ['SKUs/Designs:', conversationData.skus?.toString() || '1'],
+                ['Estimated Turnaround:', '12 - 15 Business Days'],
+                ['Shipping Method:', 'DAP (Delivered At Place)']
+            ];
+            
+            productInfo.forEach(([label, value]) => {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text(label, leftCol, currentY)
+                   .font('Helvetica')
+                   .text(value, leftCol + 120, currentY);
+                currentY += lineHeight;
+            });
+            
+            // Materials & Specifications Section
+            currentY += 20;
+            doc.fontSize(16)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('🧱 MATERIALS & SPECIFICATIONS', leftCol, currentY);
+            
+            currentY += 35;
+            
+            // Draw section border
+            doc.rect(leftCol - 10, currentY - 10, pageWidth - leftCol - 40, 150)
+               .stroke('#E0E0E0');
+            
+            // Materials
+            if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Materials:', leftCol, currentY);
+                
+                conversationData.selectedMaterial.forEach((material, index) => {
+                    doc.font('Helvetica')
+                       .text(`• ${material.name} (SKU: ${material.erp_id})`, leftCol + 120, currentY + (index * 15));
+                });
+                currentY += (conversationData.selectedMaterial.length * 15) + 10;
+            } else {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Materials:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text(conversationData.requestedMaterial || 'Standard Material', leftCol + 120, currentY);
+                currentY += lineHeight;
+            }
+            
+            // Dimensions
+            if (conversationData.dimensions && conversationData.dimensions.length > 0) {
+                const dimensionsText = conversationData.dimensions
+                    .map(d => `${d.name}: ${d.value}"`)
+                    .join(' × ');
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Dimensions:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text(dimensionsText, leftCol + 120, currentY);
+            } else {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Dimensions:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text('Custom Size', leftCol + 120, currentY);
+            }
+            currentY += lineHeight;
+            
+            // Finishes Section
+            currentY += 20;
+            doc.fontSize(16)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('✨ FINISHES & TREATMENTS', leftCol, currentY);
+            
+            currentY += 35;
+            
+            // Draw section border
+            doc.rect(leftCol - 10, currentY - 10, pageWidth - leftCol - 40, 100)
+               .stroke('#E0E0E0');
+            
+            if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Selected Finishes:', leftCol, currentY);
+                
+                conversationData.selectedFinish.forEach((finish, index) => {
+                    doc.font('Helvetica')
+                       .text(`• ${finish.name}`, leftCol + 120, currentY + (index * 15));
+                });
+                currentY += (conversationData.selectedFinish.length * 15) + 10;
+            } else {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Finishes:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text('Standard Finish', leftCol + 120, currentY);
+                currentY += lineHeight;
+            }
+            
+            // Quantity Requirements Section
+            currentY += 20;
+            doc.fontSize(16)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('🔢 QUANTITY REQUIREMENTS', leftCol, currentY);
+            
+            currentY += 35;
+            
+            // Draw section border
+            doc.rect(leftCol - 10, currentY - 10, pageWidth - leftCol - 40, 80)
+               .stroke('#E0E0E0');
+            
+            if (conversationData.quantity && conversationData.quantity.length > 0) {
+                const quantitiesText = conversationData.quantity.map(q => q.toLocaleString()).join(', ');
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Requested Quantities:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text(`${quantitiesText} pieces`, leftCol + 120, currentY);
+            } else {
+                doc.fontSize(11)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('Quantities:', leftCol, currentY)
+                   .font('Helvetica')
+                   .text('To be determined', leftCol + 120, currentY);
+            }
+            currentY += lineHeight + 10;
+            
+            // Notes Section
+            currentY += 20;
+            doc.fontSize(16)
+               .fillColor(accentColor)
+               .font('Helvetica-Bold')
+               .text('📝 NOTES & REQUIREMENTS', leftCol, currentY);
+            
+            currentY += 35;
+            
+            // Draw section border
+            doc.rect(leftCol - 10, currentY - 10, pageWidth - leftCol - 40, 100)
+               .stroke('#E0E0E0');
+            
+            doc.fontSize(10)
+               .fillColor(secondaryColor)
+               .font('Helvetica')
+               .text('• This PSF contains the specifications as discussed via WhatsApp', leftCol, currentY)
+               .text('• Final specifications may be adjusted based on artwork review', leftCol, currentY + 15)
+               .text('• Please confirm all specifications before proceeding to production', leftCol, currentY + 30)
+               .text('• Contact us for any clarifications or modifications needed', leftCol, currentY + 45);
+            
+            // Footer section
+            const footerY = pageHeight - 120;
+            
+            // Use print247usa.png image instead of text circle
+            try {
+                const fs = await import('fs/promises');
+                const path = await import('path');
+                
+                // Get the absolute path to the image
+                const imagePath = path.join(process.cwd(), 'public', 'print247usa.png');
+                
+                // Check if image exists
+                await fs.access(imagePath);
+                
+                // Add the print247usa.png image
+                doc.image(imagePath, leftCol + 15, footerY - 35, {
+                    width: 70,
+                    height: 70
+                });
+                
+            } catch (imageError) {
+                console.log('Could not load print247usa.png for PSF, falling back to text');
+                // Fallback to circle and text if image fails
+                doc.circle(leftCol + 50, footerY, 35)
+                   .stroke(primaryColor);
+                
+                doc.fontSize(8)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('PRODUCT SPEC', leftCol + 20, footerY - 15, { align: 'center' })
+                   .text('APPROVED BY', leftCol + 20, footerY - 7, { align: 'center' })
+                   .text('Print247.us', leftCol + 20, footerY + 1, { align: 'center' })
+                   .text('PSF DEPT', leftCol + 20, footerY + 9, { align: 'center' });
+            }
+            
+            // Authorization section
+            doc.fontSize(10)
+               .font('Helvetica-Bold')
+               .text('Customer Approval:', leftCol + 150, footerY - 20)
+               .text('_____________________', leftCol + 150, footerY)
+               .text('Signature & Date', leftCol + 150, footerY + 20);
+            
+            // PSF ID and Date
+            doc.fontSize(8)
+               .fillColor(secondaryColor)
+               .text(`PSF-${Date.now()}`, pageWidth - 150, footerY - 20)
+               .text(`Generated: ${new Date().toLocaleString('en-US')}`, pageWidth - 150, footerY)
+               .text('This is a computer generated document', pageWidth - 150, footerY + 20);
+            
+            // Finalize PDF
+            doc.end();
+            
+            // Wait for PDF to be ready
+            return new Promise((resolve) => {
+                doc.on('end', () => {
+                    resolve(Buffer.concat(chunks));
+                });
+            });
+            
+        } catch (error) {
+            console.error('Error creating PSF document:', error);
+            throw error;
+        }
+    }
+
     async createPDFDocument(conversationData) {
         try {
             console.log("Starting PDF creation...");
@@ -3195,64 +3663,129 @@ Have a great day! 🌟`;
             const pageWidth = doc.page.width;
             const pageHeight = doc.page.height;
             
-            // Set up colors
+            // Set up colors to match reference
             const primaryColor = '#000000';
-            const secondaryColor = '#333333';
-            const accentColor = '#FFA500'; // Orange for highlights
+            const grayColor = '#666666';
+            const lightGrayColor = '#CCCCCC';
+            const headerBgColor = '#F8F8F8';
             
             // Background
             doc.rect(0, 0, pageWidth, pageHeight).fill('#FFFFFF');
             
-            // Vertical QUOTE text on the left
+            // Header section with light gray background
+            doc.rect(0, 0, pageWidth, 80).fill(headerBgColor);
+            
+            // Date and Version in top right (matching reference)
+            const currentDate = new Date().toLocaleDateString('en-GB', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric' 
+            }).replace(/\//g, '/');
+            
+            doc.fontSize(9)
+               .fillColor(primaryColor)
+               .font('Helvetica')
+               .text(currentDate, pageWidth - 100, 15)
+               .text(`${Math.floor(Date.now()/1000)}-${Math.floor(Math.random()*1000)} (Version 2)`, pageWidth - 150, 30);
+            
+        // Print247 logo using logo.png image
+        try {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            
+            // Get the absolute path to the logo image
+            const logoPath = path.join(process.cwd(), 'public', 'logo.png');
+            
+            // Check if logo exists
+            await fs.access(logoPath);
+            
+            // Add the logo.png image in header
+            doc.image(logoPath, 50, 15, {
+                width: 120,
+                height: 50
+            });
+            
+        } catch (logoError) {
+            console.log('Could not load logo.png, falling back to text');
+            // Fallback to text if logo fails
+            doc.fontSize(28)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('Print247', 50, 25);
+            
+            doc.fontSize(16)
+               .fillColor('#0066CC')
+               .font('Helvetica')
+               .text('.us', 165, 30);
+        }            // Vertical QUOTE text on the left side
             doc.save()
-               .translate(30, 100)
+               .translate(25, 150)
                .rotate(-90)
                .fontSize(48)
-               .fillColor(primaryColor)
+               .fillColor(lightGrayColor)
                .font('Helvetica-Bold')
                .text('QUOTE', 0, 0)
                .restore();
             
-            // Header section with logo area
-            const headerY = 50;
-            const contentStartX = 120;
+            // Disclaimer section (matching reference layout)
+            const disclaimerY = 90;
+            const contentStartX = 80;
             
-            // Company logo area (simulated)
-            doc.fontSize(24)
+            doc.fontSize(9)
                .fillColor(primaryColor)
                .font('Helvetica-Bold')
-               .text('Print247', contentStartX, headerY)
-               .fontSize(16)
-               .font('Helvetica')
-               .text('.us', contentStartX + 80, headerY + 5);
+               .text('Disclaimer:', contentStartX, disclaimerY);
             
-            // Disclaimer section
-            const disclaimerY = headerY + 40;
-            doc.fontSize(10)
-               .fillColor(secondaryColor)
-               .font('Helvetica-Bold')
-               .text('Disclaimer:', contentStartX, disclaimerY)
+            const disclaimerText = 'We want to emphasize that our estimate is comprehensive, encompassing all essential operations and materials in line with industry standards. If you have any queries, please don\'t hesitate to reach out. The estimate remains valid for 30 days from the specified date, and pricing adjustments may occur after a final artwork inspection. The countdown for delivery initiation starts upon design file approval and payment receipt. We value your business and eagerly anticipate the opportunity to serve you in the future. Feel free to contact us for any further information or clarification you may need. Any additional tariff, duty, and taxes on goods at the time of arrival, if applicable, shall be paid by the receiver/customer.';
+            
+            doc.fontSize(8)
                .font('Helvetica')
-               .fontSize(8)
-               .text('We want to emphasize that our estimate is comprehensive, encompassing all essential operations and materials in line with industry standards. If you have any queries, please don\'t hesitate to reach out. The estimate remains valid for 30 days from the specified date, and pricing adjustments may occur after a final artwork inspection. The countdown for delivery initiation starts upon design file approval and payment receipt. We value your business and eagerly anticipate the opportunity to serve you in the future. Feel free to contact us for any further information or clarification you may need. Any additional tariff, duty, and taxes on goods at the time of arrival, if applicable, shall be paid by the receiver/customer.', contentStartX, disclaimerY + 15, {
+               .text(disclaimerText, contentStartX, disclaimerY + 15, {
                    width: pageWidth - contentStartX - 50,
-                   align: 'left'
+                   align: 'justify',
+                   lineGap: 2
                });
             
-            // Quote details section
-            const detailsY = disclaimerY + 120;
+            // Quote details section (matching reference layout)
+            const detailsY = disclaimerY + 130;
+            
+            // Materials processing for display
+            let materialText = 'Standard Material';
+            if (conversationData.selectedMaterials && Array.isArray(conversationData.selectedMaterials)) {
+                materialText = conversationData.selectedMaterials.map(m => m.name).join(', ');
+            } else if (conversationData.selectedMaterial?.name) {
+                materialText = conversationData.selectedMaterial.name;
+            }
+            
+            // Finishes processing for display
+            let finishText = 'Standard Finish';
+            if (conversationData.selectedFinishes && Array.isArray(conversationData.selectedFinishes)) {
+                finishText = conversationData.selectedFinishes.map(f => f.name).join(', ');
+            } else if (conversationData.selectedFinish?.name) {
+                finishText = conversationData.selectedFinish.name;
+            }
+            
+            // Quantities processing for display
+            let quantityText = '1';
+            if (conversationData.quantities && Array.isArray(conversationData.quantities)) {
+                quantityText = conversationData.quantities.join(', ');
+            } else if (conversationData.quantity) {
+                quantityText = conversationData.quantity.toString();
+            }
+            
             const details = [
-                ['Query No:', `QT-${Date.now()}`],
+                ['Query No:', `QT-${Date.now().toString().slice(-8)}`],
                 ['Customer:', 'WhatsApp Customer'],
                 ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
-                ['No of Sku\'s:', conversationData.skus?.toString() || '1'],
+                ['Materials:', materialText],
+                ['Quantities:', quantityText],
+                ['No of SKU\'s:', conversationData.skus?.toString() || '1'],
                 ['Turnaround Time:', '12 - 15 Business Days (*T&C Applies)'],
                 ['Shipping:', 'DAP (Delivered At Place)'],
-                ['Stock:', conversationData.selectedMaterial?.name || 'Standard Material'],
                 ['Finished Size:', conversationData.dimensions?.map(d => `${d.value}`).join(' x ') || 'Custom Size'],
-                ['Finishing:', 'CMYK 4/0 + DIE CUTTING + STRAIGHT LINE GLUING'],
-                ['Extra Finishes:', conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Standard Finish'],
-                ['Representative:', 'AI Assistant']
+                ['Print Specification:', 'CMYK 4/0 + DIE CUTTING + STRAIGHT LINE GLUING'],
+                ['Extra Finishes:', finishText],
+                ['Representative:', 'AI Assistant - WhatsApp Bot']
             ];
             
             let currentY = detailsY;
@@ -3278,10 +3811,11 @@ Have a great day! 🌟`;
                .lineTo(pageWidth - 50, currentY)
                .stroke('#CCCCCC');
             
-            // Pricing table
-            const tableY = currentY + 30;
+            // Pricing table (matching reference layout)
+            const tableY = currentY + 40;
             const tableStartX = contentStartX;
-            const colWidth = 100;
+            const tableWidth = pageWidth - contentStartX - 50;
+            const colWidth = tableWidth / 4;
             
             if (conversationData.pricingData) {
                 console.log("Pricing data found:", conversationData.pricingData);
@@ -3292,46 +3826,71 @@ Have a great day! 🌟`;
                     throw new Error("Invalid pricing data structure");
                 }
                 
-                // Table headers
-                doc.fontSize(12)
+                // Table border
+                doc.rect(tableStartX, tableY - 5, tableWidth, 90)
+                   .stroke('#CCCCCC');
+                
+                // Header background
+                doc.rect(tableStartX, tableY - 5, tableWidth, 20)
+                   .fillAndStroke('#F0F0F0', '#CCCCCC');
+                
+                // Table headers with proper alignment
+                doc.fontSize(10)
                    .fillColor(primaryColor)
                    .font('Helvetica-Bold')
-                   .text('Tier\'s', tableStartX, tableY)
-                   .text('Tier 1', tableStartX + colWidth, tableY)
-                   .text('Tier 2', tableStartX + colWidth * 2, tableY)
-                   .text('Tier 3', tableStartX + colWidth * 3, tableY);
+                   .text('Tier\'s', tableStartX + 5, tableY + 2, { width: colWidth - 10, align: 'left' })
+                   .text('Tier 1', tableStartX + colWidth + 5, tableY + 2, { width: colWidth - 10, align: 'center' })
+                   .text('Tier 2', tableStartX + colWidth * 2 + 5, tableY + 2, { width: colWidth - 10, align: 'center' })
+                   .text('Tier 3', tableStartX + colWidth * 3 + 5, tableY + 2, { width: colWidth - 10, align: 'center' });
                 
-                // Draw header line
-                doc.moveTo(tableStartX, tableY + 15)
-                   .lineTo(tableStartX + colWidth * 4, tableY + 15)
-                   .stroke(primaryColor);
+                // Vertical lines for columns
+                for (let i = 1; i < 4; i++) {
+                    doc.moveTo(tableStartX + colWidth * i, tableY - 5)
+                       .lineTo(tableStartX + colWidth * i, tableY + 85)
+                       .stroke('#CCCCCC');
+                }
                 
                 // Quantities row
-                doc.fontSize(10)
+                doc.fontSize(9)
                    .font('Helvetica-Bold')
-                   .text('Quantities:', tableStartX, tableY + 25);
+                   .text('Quantities:', tableStartX + 5, tableY + 25);
                 
                 qty.forEach((quantity, index) => {
-                    doc.text(quantity.toString(), tableStartX + colWidth * (index + 1), tableY + 25);
+                    doc.text(quantity.toLocaleString(), tableStartX + colWidth * (index + 1) + 5, tableY + 25, { 
+                        width: colWidth - 10, 
+                        align: 'center' 
+                    });
                 });
                 
                 // Unit Cost row
-                doc.text('Unit Cost:', tableStartX, tableY + 40);
+                const unitCostY = tableY + 40;
+                doc.moveTo(tableStartX, unitCostY - 5)
+                   .lineTo(tableStartX + tableWidth, unitCostY - 5)
+                   .stroke('#CCCCCC');
+                
+                doc.text('Unit Cost:', tableStartX + 5, unitCostY);
                 unit_cost.forEach((cost, index) => {
-                    doc.text(cost.toFixed(3), tableStartX + colWidth * (index + 1), tableY + 40);
+                    doc.text(`$${cost.toFixed(3)}`, tableStartX + colWidth * (index + 1) + 5, unitCostY, { 
+                        width: colWidth - 10, 
+                        align: 'center' 
+                    });
                 });
                 
                 // Estimate Price row
-                doc.text('Estimate Price:', tableStartX, tableY + 55);
-                qty.forEach((quantity, index) => {
-                    const totalPrice = (quantity * unit_cost[index]).toFixed(1);
-                    doc.text(totalPrice, tableStartX + colWidth * (index + 1), tableY + 55);
-                });
+                const priceY = tableY + 55;
+                doc.moveTo(tableStartX, priceY - 5)
+                   .lineTo(tableStartX + tableWidth, priceY - 5)
+                   .stroke('#CCCCCC');
                 
-                // Draw table bottom line
-                doc.moveTo(tableStartX, tableY + 70)
-                   .lineTo(tableStartX + colWidth * 4, tableY + 70)
-                   .stroke(primaryColor);
+                doc.text('Estimate Price:', tableStartX + 5, priceY);
+                qty.forEach((quantity, index) => {
+                    const totalPrice = (quantity * unit_cost[index]);
+                    doc.text(`$${totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 
+                        tableStartX + colWidth * (index + 1) + 5, priceY, { 
+                        width: colWidth - 10, 
+                        align: 'center' 
+                    });
+                });
             } else {
                 console.log("No pricing data available for PDF");
                 // Add a message indicating no pricing data
@@ -3341,30 +3900,102 @@ Have a great day! 🌟`;
                    .text('Pricing information not available', tableStartX, tableY);
             }
             
-            // Footer section
-            const footerY = pageHeight - 100;
-            
-            // Seal area (simulated)
-            doc.circle(contentStartX + 50, footerY, 30)
-               .stroke(primaryColor);
-            
-            doc.fontSize(8)
+            // Notes section (matching reference)
+            const notesY = tableY + 120;
+            doc.fontSize(10)
                .fillColor(primaryColor)
                .font('Helvetica-Bold')
-               .text('PROUDLY BASED', contentStartX + 20, footerY - 10, { align: 'center' })
-               .text('IN THE USA', contentStartX + 20, footerY - 2, { align: 'center' })
-               .text('Print247.us', contentStartX + 20, footerY + 6, { align: 'center' });
+               .text('Notes:', contentStartX, notesY);
             
-            // Authorization section
+            const notesText = `• Final pricing may vary based on artwork complexity and material specifications
+• This quote is valid for 30 days from the date above
+• Production time starts after artwork approval and payment confirmation
+• Shipping costs are included for DAP delivery within the continental US
+• Custom packaging options available upon request
+• All materials meet industry quality standards`;
+            
+            doc.fontSize(9)
+               .font('Helvetica')
+               .text(notesText, contentStartX, notesY + 15, {
+                   width: pageWidth - contentStartX - 50,
+                   lineGap: 3
+               });
+            
+            // Footer section (matching reference)
+            const footerY = pageHeight - 120;
+            
+            // Use print247usa.png image instead of text
+            try {
+                const fs = await import('fs/promises');
+                const path = await import('path');
+                
+                // Get the absolute path to the image
+                const imagePath = path.join(process.cwd(), 'public', 'print247usa.png');
+                
+                // Check if image exists
+                await fs.access(imagePath);
+                
+                // Add the print247usa.png image
+                doc.image(imagePath, contentStartX + 25, footerY - 5, {
+                    width: 70,
+                    height: 70
+                });
+                
+            } catch (imageError) {
+                console.log('Could not load print247usa.png, falling back to text');
+                // Fallback to circle and text if image fails
+                doc.circle(contentStartX + 60, footerY + 20, 35)
+                   .stroke(primaryColor)
+                   .lineWidth(2);
+                
+                doc.fontSize(7)
+                   .fillColor(primaryColor)
+                   .font('Helvetica-Bold')
+                   .text('PROUDLY BASED', contentStartX + 25, footerY + 5, { width: 70, align: 'center' })
+                   .text('IN THE USA', contentStartX + 25, footerY + 15, { width: 70, align: 'center' });
+                
+                doc.fontSize(8)
+                   .font('Helvetica-Bold')
+                   .fillColor('#0066CC')
+                   .text('Print247.us', contentStartX + 25, footerY + 30, { width: 70, align: 'center' });
+            }
+            
+            // Authorization section with proper formatting
+            doc.fontSize(10)
+               .fillColor(primaryColor)
+               .font('Helvetica-Bold')
+               .text('S.M. Authorized By:', contentStartX + 150, footerY)
+               .fontSize(9)
+               .font('Helvetica')
+               .text('_________________________________', contentStartX + 150, footerY + 15);
+            
+            // Date section
             doc.fontSize(10)
                .font('Helvetica-Bold')
-               .text('SM. Authorized By', contentStartX, footerY + 40)
-               .text('_________________', contentStartX, footerY + 55);
+               .text('Date:', pageWidth - 150, footerY)
+               .fontSize(9)
+               .font('Helvetica')
+               .text('_________________________________', pageWidth - 150, footerY + 15)
+               .text(new Date().toLocaleDateString('en-US', { 
+                   month: '2-digit',
+                   day: '2-digit', 
+                   year: 'numeric' 
+               }), pageWidth - 150, footerY + 30);
             
-            // Date
-            doc.text('Date', pageWidth - 100, footerY + 40)
-               .text('_________________', pageWidth - 100, footerY + 55)
-               .text(new Date().toLocaleDateString('en-US'), pageWidth - 100, footerY + 70);
+            // Footer line
+            doc.moveTo(contentStartX, footerY + 50)
+               .lineTo(pageWidth - 50, footerY + 50)
+               .stroke('#CCCCCC');
+            
+            // Footer text
+            doc.fontSize(8)
+               .fillColor(grayColor)
+               .font('Helvetica')
+               .text('This quote is valid for 30 days from the date above. Final pricing subject to artwork review.', 
+                     contentStartX, footerY + 60, { 
+                         width: pageWidth - contentStartX - 50, 
+                         align: 'center' 
+                     });
             
             // Finalize PDF
             doc.end();
@@ -3382,7 +4013,7 @@ Have a great day! 🌟`;
         }
     }
 
-    async createTempPDF(pdfBuffer, from) {
+    async createTempPDF(pdfBuffer, from, type = 'quote') {
         try {
             // Check if we're in Vercel environment
             if (process.env.VERCEL) {
@@ -3396,7 +4027,7 @@ Have a great day! 🌟`;
                 await fs.mkdir(tempDir, { recursive: true });
                 
                 // Generate unique filename
-                const filename = `quote_${from}_${Date.now()}.pdf`;
+                const filename = `${type.toLowerCase()}_${from}_${Date.now()}.pdf`;
                 const filepath = path.join(tempDir, filename);
                 
                 // Save PDF file
@@ -3414,13 +4045,13 @@ Have a great day! 🌟`;
                 await fs.mkdir(tempDir, { recursive: true });
                 
                 // Generate unique filename
-                const filename = `quote_${from}_${Date.now()}.pdf`;
+                const filename = `${type.toLowerCase()}_${from}_${Date.now()}.pdf`;
                 const filepath = path.join(tempDir, filename);
                 
                 // Save PDF file
                 await fs.writeFile(filepath, pdfBuffer);
                 
-                console.log('PDF saved to local temp:', filepath);
+                console.log(`${type} saved to local temp:`, filepath);
                 return filepath;
             }
             
