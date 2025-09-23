@@ -118,6 +118,7 @@ Key conversions:
 - "Matt + spot uv" = ["matte", "spot UV"]
 - "PET + White PE" = ["PET", "White PE"]
 - Extract individual materials, not compound strings
+- If "metallized" word is present in the message, the material must include "MPET"
 - "standup pouches" = category: "mylar bag", product_type: "stand up pouch"
 - Map common product types to categories correctly
 
