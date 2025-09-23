@@ -339,13 +339,7 @@ app.post('/webhook', async (req, res) => {
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
-        // Quick response to prevent timeouts - log async without waiting
-        console.log(`📥 [${webhookId}] Webhook POST received`);
-        
-        // Log to MongoDB without blocking the response (fire and forget)
-        mongoLogger.info('Webhook POST received', { endpoint: 'webhook-start', webhookId }).catch(err => {
-            console.error('MongoDB logging failed:', err.message);
-        });
+        await mongoLogger.info('Webhook POST received', { endpoint: 'webhook-start', webhookId });
         const responseDelay = Date.now() - startTime;
         
         // try {
@@ -373,36 +367,46 @@ app.post('/webhook', async (req, res) => {
         //     });
         // }
         
-        // Respond immediately to WhatsApp (required within 20 seconds)
-        const responseTime = Date.now() - startTime;
-        const response = {
-            status: 'success',
-            message: 'Webhook received, processing in background',
-            messageCount: messageCount,
-            responseTime: `${responseTime}ms`,
-            timestamp: new Date().toISOString(),
-            webhookId: webhookId
-        };
-        
-        console.log(`🚀 [${webhookId}] Sending immediate response (${responseTime}ms)`);
-        res.status(200).json(response);
-        
-        // Process messages in background without blocking the response
-        if (hasMessages) {
-            console.log(`🔄 [${webhookId}] Starting background processing for ${messageCount} messages`);
+        // Process messages and wait for completion before responding
+        try {
+            // Add timeout to prevent hanging (30 seconds)
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Webhook processing timeout after 30 seconds')), 30000);
+            });
             
-            // Process asynchronously without waiting
-            processMessagesAsync(webhookData, startTime)
-                .then(() => {
-                    const totalTime = Date.now() - startTime;
-                    console.log(`✅ [${webhookId}] Background processing completed in ${totalTime}ms`);
-                })
-                .catch((processingError) => {
-                    console.error(`❌ [${webhookId}] Background processing failed:`, processingError.message);
-                    // Log error but don't fail the webhook response
-                });
-        } else {
-            console.log(`⚠️ [${webhookId}] No messages to process`);
+            await Promise.race([
+                processMessagesAsync(webhookData, startTime),
+                timeoutPromise
+            ]);
+            
+            const totalProcessingTime = Date.now() - startTime;
+            console.log(`✅ [${webhookId}] Webhook processing completed in ${totalProcessingTime}ms`);
+            
+            // Return response after processing is complete
+            return res.status(200).json({
+                status: 'success',
+                message: 'Webhook received and processing completed',
+                messageCount: messageCount,
+                processingTime: `${totalProcessingTime}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
+            
+        } catch (processingError) {
+            console.error(`❌ [${webhookId}] Processing error:`, processingError);
+            
+            const totalProcessingTime = Date.now() - startTime;
+            
+            // Return error response after processing fails
+            return res.status(200).json({
+               status: 'success',
+                message: 'Webhook received and processing continued',
+                error: processingError.message,
+                messageCount: messageCount,
+                processingTime: `${totalProcessingTime}ms`,
+                timestamp: new Date().toISOString(),
+                webhookId: webhookId
+            });
         }
 
     } catch (error) {
