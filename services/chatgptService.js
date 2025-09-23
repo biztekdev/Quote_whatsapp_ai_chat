@@ -13,7 +13,7 @@ class ChatGPTService {
     
     const apiKey = process.env.OPENAI_API_KEY;
     
-    if (!apiKey || apiKey === 'your_openai_api_key_here') {
+    if (!apiKey) {
       console.error('OpenAI API key is missing or using placeholder value');
       mongoLogger.error('OpenAI API key is missing or using placeholder value');
       this.client = null;
@@ -124,15 +124,14 @@ Key conversions:
 Only return the JSON object, no other text.`;
 
       const response = await this.client.chat.completions.create({
-        model: process.env.OPENAI_MODEL || 'gpt-4',
+        model: process.env.OPENAI_MODEL || 'gpt-5-nano',
         messages: [
           {
             role: 'system',
             content: prompt
           }
         ],
-        temperature: 0.1,
-        max_tokens: 800
+        max_completion_tokens: 2000
       });
 
       const extractedData = JSON.parse(response.choices[0].message.content);
@@ -285,15 +284,14 @@ The message should:
 Example style: "Great! I understand you need 20,000 standup pouches 📦 with spot UV and foil finishes ✨. Size: standard, 4 SKUs, white inside. Let me prepare your quote! Is there anything else I should know?"`;
 
       const response = await this.client.chat.completions.create({
-        model: process.env.OPENAI_MODEL || 'gpt-4',
+        model: process.env.OPENAI_MODEL || 'gpt-5-nano',
         messages: [
           {
             role: 'system',
             content: prompt
           }
         ],
-        temperature: 0.7,
-        max_tokens: 200
+        max_completion_tokens: 800
       });
 
       return response.choices[0].message.content.trim();
@@ -330,15 +328,14 @@ Return JSON:
 }`;
 
       const response = await this.client.chat.completions.create({
-        model: process.env.OPENAI_MODEL || 'gpt-4',
+        model: process.env.OPENAI_MODEL || 'gpt-5-nano',
         messages: [
           {
             role: 'system',
             content: prompt
           }
         ],
-        temperature: 0.2,
-        max_tokens: 600
+        max_completion_tokens: 1500
       });
 
       return {

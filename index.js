@@ -242,6 +242,28 @@ async function processMessagesAsync(webhookData, startTime) {
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
                         console.log(`🔍 [${messageProcessingId}] Full message data:`, JSON.stringify(message, null, 2));
 
+                        // Send instant acknowledgment message for user text messages
+                        if (messageType === 'text' && message.text?.body) {
+                            try {
+                                const acknowledgmentMessages = [
+                                    "🚀 Got your message! I'm analyzing your requirements...",
+                                    "📝 Thanks for reaching out! Processing your request now...",
+                                    "⚡ Message received! Let me get your quote ready...",
+                                    "👋 Hello! I'm working on your quote request...",
+                                    "🔄 Processing your request... Please give me a moment!"
+                                ];
+                                
+                                const randomMessage = acknowledgmentMessages[Math.floor(Math.random() * acknowledgmentMessages.length)];
+                                
+                                console.log(`📤 [${messageProcessingId}] Sending instant acknowledgment to ${from}`);
+                                await whatsappService.sendMessage(from, randomMessage);
+                                console.log(`✅ [${messageProcessingId}] Instant acknowledgment sent successfully`);
+                            } catch (ackError) {
+                                console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
+                                // Don't fail the main processing if acknowledgment fails
+                            }
+                        }
+
                         // Atomically check if message can be processed and initialize if it can
                         const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
                             messageId,
@@ -348,7 +370,7 @@ app.post('/webhook', async (req, res) => {
         try {
             // Add timeout to prevent hanging (30 seconds)
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Webhook processing timeout after 20 seconds')), 20000);
+                setTimeout(() => reject(new Error('Webhook processing timeout after 15 seconds')), 15000);
             });
             
             await Promise.race([
@@ -376,8 +398,8 @@ app.post('/webhook', async (req, res) => {
             
             // Return error response after processing fails
             return res.status(200).json({
-                status: 'error',
-                message: 'Webhook received but processing failed',
+               status: 'success',
+                message: 'Webhook received and processing continued',
                 error: processingError.message,
                 messageCount: messageCount,
                 processingTime: `${totalProcessingTime}ms`,

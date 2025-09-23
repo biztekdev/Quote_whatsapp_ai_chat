@@ -34,15 +34,14 @@ async function testOpenAIKey() {
     });
     
     const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4',
+      model: process.env.OPENAI_MODEL || 'gpt-5-nano',
       messages: [
         {
           role: 'user',
           content: 'Say "Hello World" to test the connection.'
         }
       ],
-      max_tokens: 10,
-      temperature: 0
+      max_completion_tokens: 10
     });
     
     console.log('✅ API Connection successful!');
