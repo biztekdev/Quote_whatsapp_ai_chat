@@ -342,8 +342,13 @@ class MessageHandler {
             });
 
             // Only reset conversation for simple greetings or explicit new quote requests
+            // Don't reset if we're already in an active conversation step expecting a response
+            const activeSteps = ['quote_generation', 'greeting_response', 'material_selection', 'finish_selection', 'quantity_input', 'dimension_input'];
+            const isInActiveStep = activeSteps.includes(conversationState.currentStep);
+            
             // Don't reset for complex messages with product information or detected entities
-            if (wantsNewQuote || (isGreetingMessage && !hasProductInfo && Object.keys(aiEntities).length === 0)) {
+            // Don't reset if we're in an active conversation step expecting a response
+            if (!isInActiveStep && (wantsNewQuote || (isGreetingMessage && !hasProductInfo && Object.keys(aiEntities).length === 0))) {
                 console.log("User wants new quote or is simple greeting, resetting conversation");
                 
                 // Reset conversation to start fresh

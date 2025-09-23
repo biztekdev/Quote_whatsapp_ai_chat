@@ -240,24 +240,36 @@ async function processMessagesAsync(webhookData, startTime) {
                         const messageProcessingId = `${processingId}_msg_${i}`;
 
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
-                        console.log(`🔍 [${messageProcessingId}] Full message data:`, JSON.stringify(message, null, 2));
+                        console.log(`🔍 [${messageProcessingId}] Message: "${messageBody}"`);
 
-                        // Atomically check if message can be processed and initialize if it can
-                        const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
-                            messageId,
-                            from,
-                            messageType,
-                            message, // webhookData
-                            null // conversationId
-                        );
+                        // STEP 1: Check if message can be processed first
+                        let canProcess = true;
+                        let isNewMessage = false;
+                        
+                        try {
+                            const { canProcess: checkResult, status } = await messageStatusService.atomicCheckAndInitialize(
+                                messageId,
+                                from,
+                                messageType,
+                                message, // webhookData
+                                null // conversationId
+                            );
+                            canProcess = checkResult;
+                            isNewMessage = canProcess; // Only new messages can be processed
+                        } catch (dbError) {
+                            console.error(`❌ [${messageProcessingId}] Database check failed:`, dbError.message);
+                            // Continue processing even if DB check fails (for better user experience)
+                            canProcess = true;
+                            isNewMessage = true;
+                        }
 
                         if (!canProcess) {
                             console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
                             continue; // Skip this message
                         }
 
-                        // Send instant acknowledgment message for user text messages (only for new messages)
-                        if (messageType === 'text' && message.text?.body) {
+                        // STEP 2: Send instant acknowledgment ONLY for new text messages
+                        if (isNewMessage && messageType === 'text' && message.text?.body) {
                             try {
                                 const acknowledgmentMessages = [
                                     "🚀 Got your message! I'm analyzing your requirements...",
@@ -274,7 +286,7 @@ async function processMessagesAsync(webhookData, startTime) {
                                 console.log(`✅ [${messageProcessingId}] Instant acknowledgment sent successfully`);
                             } catch (ackError) {
                                 console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
-                                // Don't fail the main processing if acknowledgment fails
+                                // Continue with processing even if acknowledgment fails
                             }
                         }
 
