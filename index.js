@@ -335,11 +335,11 @@ async function processMessagesAsync(webhookData, startTime) {
 
 // WhatsApp webhook for receiving messages
 app.post('/webhook', async (req, res) => {
-    await mongoLogger.logError(error, { endpoint: 'initial webhook start' });
     const startTime = Date.now();
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
+        await mongoLogger.info('Webhook POST received', { endpoint: 'webhook-start', webhookId });
         const responseDelay = Date.now() - startTime;
         
         // try {
