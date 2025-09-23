@@ -565,11 +565,47 @@ class MessageHandler {
                                             name: foundCategory.name,
                                             description: foundCategory.description
                                         };
+                                        
                                         // If this is a greeting message with category, auto-set wantsQuote to true
                                         if (messageText && this.isGreeting(messageText)) {
                                             updatedData.wantsQuote = true;
                                             console.log("🎯 Auto-setting wantsQuote=true for greeting with category:", foundCategory.name);
                                         }
+                                        
+                                        // Process any stored materials now that we have a category
+                                        if (updatedData.requestedMaterial && (!updatedData.selectedMaterial || updatedData.selectedMaterial.length === 0)) {
+                                            console.log("🔄 Processing stored materials with newly selected category:", foundCategory.name);
+                                            const storedMaterials = updatedData.requestedMaterial.split(' + ');
+                                            const foundMaterials = [];
+                                            let newRequestedMaterials = [];
+                                            
+                                            for (const material of storedMaterials) {
+                                                console.log(`🔍 Re-processing material "${material}" with category filter: ${foundCategory._id}`);
+                                                const findMaterial = await this.findMaterialByName(material.trim(), foundCategory._id.toString());
+                                                if (findMaterial) {
+                                                    foundMaterials.push({
+                                                        _id: findMaterial.erp_id.toString(),
+                                                        name: findMaterial.name,
+                                                        erp_id: findMaterial.erp_id
+                                                    });
+                                                    console.log("🚨 CATEGORY-FILTERED MATERIAL:", findMaterial.name, "ERP ID:", findMaterial.erp_id);
+                                                } else {
+                                                    newRequestedMaterials.push(material);
+                                                    console.log("Material not found in selected category, keeping as requested:", material);
+                                                }
+                                            }
+                                            
+                                            if (foundMaterials.length > 0) {
+                                                updatedData.selectedMaterial = foundMaterials;
+                                                // Clear requestedMaterial since we found matches
+                                                if (newRequestedMaterials.length === 0) {
+                                                    updatedData.requestedMaterial = null;
+                                                } else {
+                                                    updatedData.requestedMaterial = newRequestedMaterials.join(' + ');
+                                                }
+                                            }
+                                        }
+                                        
                                         // console.log("Found category:", foundCategory.name);
                                     } else {
                                         updatedData.requestedCategory = value || body;
@@ -690,29 +726,40 @@ class MessageHandler {
                                     
                                     // Only update materials if not already confirmed
                                     if (!currentConversationData.selectedMaterial || currentConversationData.selectedMaterial.length === 0) {
-                                        const foundMaterials = [];
-                                        let requestedMaterials = [];
+                                        // Check if we have a category to filter by
+                                        const categoryId = updatedData.selectedCategory?.id || currentConversationData.selectedCategory?.id || null;
                                         
-                                        for (const material of materials) {
-                                            const findMaterial = await this.findMaterialByName(material);
-                                            if (findMaterial) {
-                                                foundMaterials.push({
-                                                    _id: findMaterial.erp_id.toString(),
-                                                    name: findMaterial.name,
-                                                    erp_id: findMaterial.erp_id
-                                                });
-                                                console.log("🚨 AUTO-SELECTED MATERIAL:", findMaterial.name, "SKU:", findMaterial.erp_id);
-                                            } else {
-                                                requestedMaterials.push(material);
-                                                console.log("Material not found in database, storing as requested:", material);
+                                        if (!categoryId) {
+                                            // No category selected yet - store materials as requested for later processing
+                                            console.log("⏳ No category selected yet, storing materials as requested for later processing");
+                                            updatedData.requestedMaterial = materials.join(' + ');
+                                        } else {
+                                            // Category available - search for materials within that category
+                                            const foundMaterials = [];
+                                            let requestedMaterials = [];
+                                            
+                                            for (const material of materials) {
+                                                console.log(`🔍 Material search for "${material}" with category filter: ${categoryId}`);
+                                                const findMaterial = await this.findMaterialByName(material, categoryId);
+                                                if (findMaterial) {
+                                                    foundMaterials.push({
+                                                        _id: findMaterial.erp_id.toString(),
+                                                        name: findMaterial.name,
+                                                        erp_id: findMaterial.erp_id
+                                                    });
+                                                    console.log("🚨 AUTO-SELECTED MATERIAL:", findMaterial.name, "ERP ID:", findMaterial.erp_id);
+                                                } else {
+                                                    requestedMaterials.push(material);
+                                                    console.log("Material not found in category, storing as requested:", material);
+                                                }
                                             }
-                                        }
-                                        
-                                        if (foundMaterials.length > 0) {
-                                            updatedData.selectedMaterial = foundMaterials;
-                                        }
-                                        if (requestedMaterials.length > 0) {
-                                            updatedData.requestedMaterial = requestedMaterials.join(' + ');
+                                            
+                                            if (foundMaterials.length > 0) {
+                                                updatedData.selectedMaterial = foundMaterials;
+                                            }
+                                            if (requestedMaterials.length > 0) {
+                                                updatedData.requestedMaterial = requestedMaterials.join(' + ');
+                                            }
                                         }
                                     } else {
                                         console.log("Materials already selected, skipping extraction to prevent override");
@@ -956,13 +1003,17 @@ class MessageHandler {
         }
     }
 
-    async findMaterialByName(materialName) {
+    async findMaterialByName(materialName, categoryId = null) {
         try {
-            console.log("🔍 Searching for material:", materialName);
+            console.log("🔍 Searching for material:", materialName, categoryId ? `in category: ${categoryId}` : 'across all categories');
             
-            // Search all active materials
-            const materials = await Material.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
-            console.log("🔍 Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id })));
+            // Search materials - filter by category if provided
+            const searchQuery = { isActive: true };
+            if (categoryId) {
+                searchQuery.categoryId = categoryId;
+            }
+            const materials = await Material.find(searchQuery).sort({ sortOrder: 1, name: 1 });
+            console.log("🔍 Available materials:", materials.map(m => ({ name: m.name, erp_id: m.erp_id, categoryId: m.categoryId })));
             
             // Search in name field (exact match first)
             let foundMaterial = materials.find(material =>
@@ -1659,7 +1710,7 @@ Would you like to get a quote for mylar bags today?`;
         if ((conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) || conversationData.requestedMaterial) {
             if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
                 const materialsText = conversationData.selectedMaterial
-                    .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                    .map(m => m.name)
                     .join(', ');
                 bodyText += `🧱 **Materials:** ${materialsText}\n`;
             } else {
@@ -1859,10 +1910,10 @@ Would you like to get a quote for mylar bags today?`;
         message += `Here's what I have so far:\n`;
         message += `📂 **Category:** ${conversationData.selectedCategory?.name || 'Not specified'}\n`;
         
-        // Handle multiple materials with SKUs
+        // Handle multiple materials (without showing internal ERP IDs)
         if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
             const materialsText = conversationData.selectedMaterial
-                .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                .map(m => m.name)
                 .join(', ');
             message += `🧱 **Materials:** ${materialsText}\n`;
         } else {
@@ -2446,10 +2497,10 @@ Would you like to get a quote for mylar bags today?`;
                     });
                 }
                 
-                // If still not found in category materials, search across ALL materials
+                // If still not found in category materials, make one more attempt within the category
                 if (!selectedMaterial) {
-                    console.log(`🔍 Material not found in category, searching across all materials for: ${messageText}`);
-                    selectedMaterial = await this.findMaterialByName(messageText);
+                    console.log(`🔍 Material not found in category, doing advanced search within category for: ${messageText}`);
+                    selectedMaterial = await this.findMaterialByName(messageText, conversationData.selectedCategory.id);
                     
                     if (selectedMaterial) {
                         console.log(`🎯 Found material across all materials: ${selectedMaterial.name}`);
@@ -2772,9 +2823,9 @@ What quantity would you like?`;
                 // Format the acknowledgment message
                 const categoryName = conversationData.selectedCategory?.name || 'Not specified';
                 const productName = conversationData.selectedProduct?.name || 'Not specified';
-                // Format materials with SKUs
+                // Format materials (without showing internal ERP IDs)
                 const materialName = (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) 
-                    ? conversationData.selectedMaterial.map(m => `${m.name} (SKU: ${m.erp_id})`).join(', ')
+                    ? conversationData.selectedMaterial.map(m => m.name).join(', ')
                     : conversationData.requestedMaterial || 'Not specified';
 
                 // Format finishes
@@ -2972,7 +3023,7 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                             const categoryName = updatedData.selectedCategory?.name || 'Not specified';
                             const productName = updatedData.selectedProduct?.name || 'Not specified';
                             const materialName = (updatedData.selectedMaterial && updatedData.selectedMaterial.length > 0) 
-                                ? updatedData.selectedMaterial.map(m => `${m.name} (SKU: ${m.erp_id})`).join(', ')
+                                ? updatedData.selectedMaterial.map(m => m.name).join(', ')
                                 : updatedData.requestedMaterial || 'Not specified';
                             const finishNames = updatedData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified';
                             const dimensionsText = updatedData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified';
@@ -3194,7 +3245,7 @@ Have a great day! 🌟`;
             pricingMessage += `📦 **Product:** ${conversationData.selectedProduct?.name || 'N/A'}\n`;
             if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
                 const materialsText = conversationData.selectedMaterial
-                    .map(m => `${m.name} (SKU: ${m.erp_id})`)
+                    .map(m => m.name)
                     .join(', ');
                 pricingMessage += `🧱 **Materials:** ${materialsText}\n`;
             } else {
@@ -3532,7 +3583,7 @@ Have a great day! 🌟`;
                 
                 conversationData.selectedMaterial.forEach((material, index) => {
                     doc.font('Helvetica')
-                       .text(`• ${material.name} (SKU: ${material.erp_id})`, leftCol + 120, currentY + (index * 15));
+                       .text(`• ${material.name}`, leftCol + 120, currentY + (index * 15));
                 });
                 currentY += (conversationData.selectedMaterial.length * 15) + 10;
             } else {
