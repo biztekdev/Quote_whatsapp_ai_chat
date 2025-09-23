@@ -371,7 +371,7 @@ app.post('/webhook', async (req, res) => {
         try {
             // Add timeout to prevent hanging (30 seconds)
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Webhook processing timeout after 30 seconds')), 30000);
+                setTimeout(() => reject(new Error('Webhook processing timeout after 20 seconds')), 20000);
             });
             
             await Promise.race([
