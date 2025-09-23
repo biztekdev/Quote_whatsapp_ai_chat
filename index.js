@@ -242,7 +242,21 @@ async function processMessagesAsync(webhookData, startTime) {
                         console.log(`🔄 [${messageProcessingId}] Processing user message: ${messageId} from ${from} type ${messageType}`);
                         console.log(`🔍 [${messageProcessingId}] Full message data:`, JSON.stringify(message, null, 2));
 
-                        // Send instant acknowledgment message for user text messages
+                        // Atomically check if message can be processed and initialize if it can
+                        const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
+                            messageId,
+                            from,
+                            messageType,
+                            message, // webhookData
+                            null // conversationId
+                        );
+
+                        if (!canProcess) {
+                            console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
+                            continue; // Skip this message
+                        }
+
+                        // Send instant acknowledgment message for user text messages (only for new messages)
                         if (messageType === 'text' && message.text?.body) {
                             try {
                                 const acknowledgmentMessages = [
@@ -262,20 +276,6 @@ async function processMessagesAsync(webhookData, startTime) {
                                 console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
                                 // Don't fail the main processing if acknowledgment fails
                             }
-                        }
-
-                        // Atomically check if message can be processed and initialize if it can
-                        const { canProcess, status } = await messageStatusService.atomicCheckAndInitialize(
-                            messageId,
-                            from,
-                            messageType,
-                            message, // webhookData
-                            null // conversationId
-                        );
-
-                        if (!canProcess) {
-                            console.log(`⏭️ [${messageProcessingId}] Message already processed, skipping`);
-                            continue; // Skip this message
                         }
 
                         // Mark message as processing (atomic operation)
