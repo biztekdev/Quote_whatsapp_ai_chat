@@ -193,6 +193,14 @@ async function processMessagesAsync(webhookData, startTime) {
     try {
         console.log(`🔄 Processing messages`);
 
+        // Debug: Log webhook structure
+        console.log(`🔍 [${processingId}] Webhook structure:`, JSON.stringify({
+            entryCount: webhookData.entry?.length || 0,
+            changesCount: webhookData.entry?.[0]?.changes?.length || 0,
+            messagesCount: webhookData.entry?.[0]?.changes?.[0]?.value?.messages?.length || 0,
+            firstMessageId: webhookData.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id || 'none'
+        }, null, 2));
+
         // Check if this is a valid WhatsApp webhook with messages
         if (webhookData.entry && webhookData.entry.length > 0) {
 
@@ -268,7 +276,17 @@ async function processMessagesAsync(webhookData, startTime) {
                             continue; // Skip this message
                         }
 
-                        // STEP 2: Send instant acknowledgment ONLY for new text messages (except restart messages)
+                        // STEP 2: Immediately mark as processing to prevent race conditions
+                        const processingStatus = await messageStatusService.markAsProcessing(messageId);
+                        
+                        if (!processingStatus) {
+                            console.log(`⏭️ [${messageProcessingId}] Message is already being processed by another instance (race condition detected), skipping`);
+                            continue; // Skip this message
+                        }
+
+                        console.log(`🔒 [${messageProcessingId}] Message ${messageId} successfully marked as processing`);
+
+                        // STEP 3: Send instant acknowledgment ONLY for new text messages (except restart messages)
                         if (isNewMessage && messageType === 'text' && message.text?.body) {
                             const messageText = message.text.body.toLowerCase().trim();
                             const isRestartMessage = ['restart', 'new quote', 'start over', 'reset', 'begin again', 'fresh quote', 'another quote', 'new order'].some(keyword => 
@@ -280,9 +298,10 @@ async function processMessagesAsync(webhookData, startTime) {
                                 try {
                                     const acknowledgmentMessage = "📝 Thanks for your message! I'm processing your request...";
                                     
-                                    console.log(`📤 [${messageProcessingId}] Sending instant acknowledgment to ${from}`);
+                                    console.log(`📤 [${messageProcessingId}] SENDING instant acknowledgment to ${from} for message: "${messageText}"`);
+                                    console.log(`📤 [${messageProcessingId}] Message ID: ${messageId}, Processing ID: ${messageProcessingId}`);
                                     await whatsappService.sendMessage(from, acknowledgmentMessage);
-                                    console.log(`✅ [${messageProcessingId}] Instant acknowledgment sent successfully`);
+                                    console.log(`✅ [${messageProcessingId}] INSTANT acknowledgment sent successfully for message: "${messageText}"`);
                                 } catch (ackError) {
                                     console.error(`❌ [${messageProcessingId}] Failed to send acknowledgment:`, ackError);
                                     // Continue with processing even if acknowledgment fails
@@ -290,14 +309,6 @@ async function processMessagesAsync(webhookData, startTime) {
                             } else {
                                 console.log(`⏭️ [${messageProcessingId}] Skipping instant acknowledgment for restart message: "${messageText}"`);
                             }
-                        }
-
-                        // Mark message as processing (atomic operation)
-                        const processingStatus = await messageStatusService.markAsProcessing(messageId);
-                        
-                        if (!processingStatus) {
-                            console.log(`⏭️ [${messageProcessingId}] Message is already being processed by another instance, skipping`);
-                            continue; // Skip this message
                         }
 
                         // Process the message
@@ -351,8 +362,10 @@ async function processMessagesAsync(webhookData, startTime) {
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const timestamp = new Date().toISOString();
     
     try {
+        console.log(`📥 [${webhookId}] WEBHOOK RECEIVED at ${timestamp}`);
         await mongoLogger.info('Webhook POST received', { endpoint: 'webhook-start', webhookId });
         const responseDelay = Date.now() - startTime;
         

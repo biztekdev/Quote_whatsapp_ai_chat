@@ -3108,6 +3108,13 @@ What quantity would you like?`;
     }
 
     async handleQuoteGeneration(messageText, from, conversationData, message) {
+        console.log("🔍 [QUOTE DEBUG START] ======================");
+        console.log("🔍 [QUOTE DEBUG] messageText:", messageText);
+        console.log("🔍 [QUOTE DEBUG] quoteAcknowledged:", conversationData.quoteAcknowledged);
+        console.log("🔍 [QUOTE DEBUG] pricing_done:", conversationData.pricing_done);
+        console.log("🔍 [QUOTE DEBUG] wantsPdf:", conversationData.wantsPdf);
+        console.log("🔍 [QUOTE DEBUG] completed:", conversationData.completed);
+        console.log("🔍 [QUOTE DEBUG END] ======================");
         console.log("conversationData111111111 ", conversationData);
         try {
             // Check if this looks like a dimension message (e.g., "5x5x5", "10,8,3", etc.)
