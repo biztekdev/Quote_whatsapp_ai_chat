@@ -2378,7 +2378,7 @@ Would you like to get a quote for mylar bags today?`;
         }
         
         message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
-        message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
+        message += `🎨 **SKUs/Designs:** ${conversationData.skus || '1 (default)'}\n`;
         
         // Show finishes (both selected and requested)
         let finishDisplay = 'Not specified';
@@ -2790,7 +2790,7 @@ Would you like to get a quote for mylar bags today?`;
             message += `🔧 **Product:** ${conversationData.selectedProduct?.name || 'Not specified'}\n`;
             message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
             message += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified'}\n`;
-            message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
+            message += `🎨 **SKUs/Designs:** ${conversationData.skus || '1 (default)'}\n`;
             
             // Show finishes (both selected and requested)
             let finishDisplay = 'Not specified';
