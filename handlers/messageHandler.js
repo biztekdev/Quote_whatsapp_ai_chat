@@ -802,12 +802,19 @@ class MessageHandler {
                                     }
                                     break;
                                 case 'material:material':
+                                    // Add confidence check for material auto-selection to prevent false positives
+                                    if (confidence < 0.8) {
+                                        console.log(`🚫 Material entity confidence too low (${confidence}) for auto-selection:`, value || body);
+                                        break;
+                                    }
+
                                     const materials = Array.isArray(entities[entityType]) ? 
                                         entities[entityType].map(e => e.value || e.body) : 
                                         [value || body];
                                     
                                     console.log("🚨 MATERIAL ENTITY DETECTED:", {
                                         materials,
+                                        confidence,
                                         originalEntity: entities[entityType],
                                         messageText,
                                         hasExistingMaterial: !!(currentConversationData.selectedMaterial && currentConversationData.selectedMaterial.length > 0)
