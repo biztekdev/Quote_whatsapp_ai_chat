@@ -5150,8 +5150,8 @@ Would you like to:`;
             // Temporarily disable voice processing for Vercel deployment
             console.log('⚠️ Voice processing temporarily disabled for Vercel compatibility');
             
-            await this.sendMessageOnce(
-                message.id + '-voice-temp-disabled',
+            // Send response directly without message tracking to avoid status errors
+            await this.whatsappService.sendMessage(
                 from,
                 "🎵 I received your voice message! Voice-to-text processing is temporarily unavailable while we fix some technical issues.\n\nPlease send your message as text instead, and I'll help you with your quote! 📝"
             );
@@ -5164,8 +5164,7 @@ Would you like to:`;
             if (!voiceProcessingService.isAvailable()) {
                 console.log('⚠️ Voice processing not available - OpenAI API key not configured');
                 
-                await this.sendMessageOnce(
-                    message.id + '-no-voice-processing',
+                await this.whatsappService.sendMessage(
                     from,
                     "🎵 I received your voice message, but voice-to-text processing is currently not available. Please send your message as text instead. 📝"
                 );
@@ -5248,8 +5247,8 @@ Would you like to:`;
             });
 
             try {
-                await this.sendMessageOnce(
-                    message.id + '-audio-fallback',
+                // Send fallback message directly without tracking
+                await this.whatsappService.sendMessage(
                     from,
                     "Sorry, I had trouble processing your voice message. Please try typing your message instead. 📝"
                 );
