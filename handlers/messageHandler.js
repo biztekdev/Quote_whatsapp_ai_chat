@@ -3,6 +3,7 @@ import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
 import mongoLogger from '../services/mongoLogger.js';
 import messageStatusService from '../services/messageStatusService.js';
+import voiceProcessingService from '../services/voiceProcessingService.js';
 import { Product, ProductCategory } from '../models/productModel.js';
 import { Material } from '../models/materialModel.js';
 import { ProductFinish } from '../models/finishModel.js';
@@ -5137,11 +5138,98 @@ Would you like to:`;
     }
 
     async handleAudioMessage(message, from) {
-        await mongoLogger.info('Received audio message', { from });
-        await this.whatsappService.sendMessage(
-            from,
-            "Thank you for the voice message! 🎵 Our team will listen to it and respond accordingly."
-        );
+        try {
+            await mongoLogger.info('Received audio message', { 
+                from, 
+                audioId: message.audio?.id,
+                mimeType: message.audio?.mime_type,
+                duration: message.audio?.duration 
+            });
+
+            // Send immediate acknowledgment
+            await this.sendMessageOnce(
+                message.id + '-audio-ack',
+                from,
+                "🎵 Got your voice message! Converting it to text... Please wait a moment."
+            );
+
+            // Process the voice message
+            console.log('🎙️ Processing voice message:', message.audio);
+            
+            const voiceResult = await voiceProcessingService.processVoiceMessage(
+                message.audio, 
+                process.env.WHATSAPP_ACCESS_TOKEN
+            );
+
+            if (!voiceResult.success) {
+                console.error('❌ Voice processing failed:', voiceResult.error);
+                
+                await this.sendMessageOnce(
+                    message.id + '-audio-error',
+                    from,
+                    "Sorry, I couldn't understand your voice message. Could you please type your message instead? 📝\n\nOr try sending the voice message again - make sure you're in a quiet environment."
+                );
+                return;
+            }
+
+            const transcribedText = voiceResult.text;
+            console.log('✅ Voice transcribed:', transcribedText);
+
+            // Send transcription confirmation to user
+            await this.sendMessageOnce(
+                message.id + '-transcription',
+                from,
+                `🎯 I heard: "${transcribedText}"\n\nProcessing your request...`
+            );
+
+            // Create a text message object with the transcribed text
+            const textMessage = {
+                id: message.id + '-voice-to-text',
+                from: from,
+                timestamp: message.timestamp,
+                type: 'text',
+                text: {
+                    body: transcribedText
+                },
+                original_type: 'audio', // Track that this came from voice
+                voice_metadata: {
+                    duration: voiceResult.duration,
+                    language: voiceResult.language,
+                    original_audio_id: message.audio?.id
+                }
+            };
+
+            // Process the transcribed text as a regular text message
+            await this.handleTextMessage(textMessage, from);
+
+            // Log successful voice processing
+            await mongoLogger.info('Voice message processed successfully', {
+                from,
+                originalAudioId: message.audio?.id,
+                transcribedText: transcribedText,
+                textMessageId: textMessage.id,
+                duration: voiceResult.duration,
+                language: voiceResult.language
+            });
+
+        } catch (error) {
+            console.error('❌ Error handling audio message:', error);
+            await mongoLogger.logError(error, {
+                source: 'audio-message-handler',
+                from: from,
+                audioMessage: message.audio
+            });
+
+            try {
+                await this.sendMessageOnce(
+                    message.id + '-audio-fallback',
+                    from,
+                    "Sorry, I had trouble processing your voice message. Please try typing your message instead. 📝"
+                );
+            } catch (sendError) {
+                console.error('Error sending audio error message:', sendError);
+            }
+        }
     }
 
     async handleVideoMessage(message, from) {

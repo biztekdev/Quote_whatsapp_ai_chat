@@ -7,6 +7,11 @@ export const config = {
         verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || 'your_verify_token',
         baseUrl: `https://graph.facebook.com/${process.env.WHATSAPP_VERSION || 'v23.0'}`
     },
+    openai: {
+        apiKey: process.env.OPENAI_API_KEY,
+        whisperModel: 'whisper-1',
+        gptModel: 'gpt-4-turbo-preview' // or whatever model you're using
+    },
     wit: {
         accessToken: process.env.WIT_AI_ACCESS_TOKEN
     },
