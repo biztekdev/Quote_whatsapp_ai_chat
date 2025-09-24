@@ -977,18 +977,94 @@ class MessageHandler {
         try {
             const categories = await conversationService.getProductCategories();
 
-            // Search in name field
+            // Apply common spelling corrections
+            let normalizedCategoryName = categoryName.toLowerCase();
+            
+            // Common spelling variations
+            const spellingCorrections = {
+                'mylar': 'mylor',
+                'polyamide': 'pa',
+                'polyethylene': 'pe',
+                'polypropylene': 'pp',
+                'kraft paper': 'kraft'
+            };
+            
+            // Apply spelling corrections
+            for (const [incorrect, correct] of Object.entries(spellingCorrections)) {
+                if (normalizedCategoryName.includes(incorrect)) {
+                    normalizedCategoryName = normalizedCategoryName.replace(incorrect, correct);
+                    console.log(`🔧 Spelling correction applied: "${incorrect}" → "${correct}"`);
+                }
+            }
+
+            // Function to normalize text for comparison (handle hyphens, spaces)
+            const normalizeForComparison = (text) => {
+                return text.toLowerCase()
+                    .replace(/[-\s]+/g, ' ')  // Replace hyphens and multiple spaces with single space
+                    .replace(/\s+/g, '')      // Remove all spaces for comparison
+                    .trim();
+            };
+
+            // Search in name field with original name
             let foundCategory = categories.find(cat =>
                 cat.name.toLowerCase().includes(categoryName.toLowerCase())
             );
 
-            // If not found in name, search in sub_names
+            // Search with corrected name if original didn't match
+            if (!foundCategory && normalizedCategoryName !== categoryName.toLowerCase()) {
+                foundCategory = categories.find(cat =>
+                    cat.name.toLowerCase().includes(normalizedCategoryName)
+                );
+                
+                if (foundCategory) {
+                    console.log(`✅ Found category "${foundCategory.name}" using spelling correction for "${categoryName}"`);
+                }
+            }
+
+            // If not found, try normalized comparison (handles spacing/hyphen differences)
+            if (!foundCategory) {
+                const normalizedInput = normalizeForComparison(categoryName);
+                foundCategory = categories.find(cat => {
+                    const normalizedCatName = normalizeForComparison(cat.name);
+                    return normalizedCatName.includes(normalizedInput) || normalizedInput.includes(normalizedCatName);
+                });
+                
+                if (foundCategory) {
+                    console.log(`✅ Found category "${foundCategory.name}" using normalized matching for "${categoryName}"`);
+                }
+            }
+
+            // If not found in name, search in sub_names with original name
             if (!foundCategory) {
                 foundCategory = categories.find(cat =>
                     cat.sub_names && cat.sub_names.some(subName =>
                         subName.toLowerCase().includes(categoryName.toLowerCase())
                     )
                 );
+            }
+
+            // If still not found, search sub_names with corrected name
+            if (!foundCategory && normalizedCategoryName !== categoryName.toLowerCase()) {
+                foundCategory = categories.find(cat =>
+                    cat.sub_names && cat.sub_names.some(subName =>
+                        subName.toLowerCase().includes(normalizedCategoryName)
+                    )
+                );
+            }
+
+            // If still not found, try normalized comparison in sub_names
+            if (!foundCategory) {
+                const normalizedInput = normalizeForComparison(categoryName);
+                foundCategory = categories.find(cat =>
+                    cat.sub_names && cat.sub_names.some(subName => {
+                        const normalizedSubName = normalizeForComparison(subName);
+                        return normalizedSubName.includes(normalizedInput) || normalizedInput.includes(normalizedSubName);
+                    })
+                );
+                
+                if (foundCategory) {
+                    console.log(`✅ Found category "${foundCategory.name}" using normalized sub_names matching for "${categoryName}"`);
+                }
             }
 
             return foundCategory;
