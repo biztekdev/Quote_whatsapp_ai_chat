@@ -3877,55 +3877,38 @@ Have a great day! 🌟`;
         try {
             const { qty, unit_cost } = pricingData;
             
-            // Create beautiful pricing table
-            let pricingMessage = `🎉 **Your Quote is Ready!** 🎉\n\n`;
+            // Create beautiful simplified pricing message
+            let pricingMessage = `� *Quote Ready!*\n\n`;
             
-            // Add product details
-            pricingMessage += `📦 **Product:** ${conversationData.selectedProduct?.name || 'N/A'}\n`;
+            // Product summary
+            pricingMessage += `📦 ${conversationData.selectedProduct?.name || 'Product'}\n`;
             if (conversationData.selectedMaterial && conversationData.selectedMaterial.length > 0) {
-                const materialsText = conversationData.selectedMaterial
-                    .map(m => m.name)
-                    .join(', ');
-                pricingMessage += `🧱 **Materials:** ${materialsText}\n`;
-            } else {
-                pricingMessage += `🧱 **Material:** ${conversationData.requestedMaterial || 'N/A'}\n`;
+                const materialsText = conversationData.selectedMaterial.map(m => m.name).join(', ');
+                pricingMessage += `🧱 ${materialsText}\n`;
             }
-            pricingMessage += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'N/A'}\n`;
-            pricingMessage += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'N/A'}\n\n`;
+            pricingMessage += `✨ ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Standard'}\n`;
+            pricingMessage += `📏 ${conversationData.dimensions?.map(d => `${d.value}`).join(' x ') || 'Custom'}\n\n`;
             
-            // Create pricing table
-            pricingMessage += `💰 **PRICING BREAKDOWN**\n`;
-            pricingMessage += `┌─────────────┬─────────────┬─────────────┐\n`;
-            pricingMessage += `│    Tier     │  Quantity   │ Unit Price  │\n`;
-            pricingMessage += `├─────────────┼─────────────┼─────────────┤\n`;
+            // Simplified pricing - show best value tier
+            const bestTierIndex = qty.length - 1; // Last tier is usually best value
             
-            // Add each tier
+            // Show all pricing tiers
+            pricingMessage += `💰 *Pricing Options*\n`;
             qty.forEach((quantity, index) => {
-                const tier = index + 1;
                 const unitPrice = unit_cost[index];
                 const totalPrice = (quantity * unitPrice).toFixed(2);
                 
-                pricingMessage += `│   Tier ${tier}    │   ${quantity.toLocaleString()}   │   $${unitPrice.toFixed(3)}   │\n`;
-            });
-            
-            pricingMessage += `└─────────────┴─────────────┴─────────────┘\n\n`;
-            
-            // Add total calculation for each tier
-            pricingMessage += `📊 **TOTAL COST BY TIER**\n`;
-            qty.forEach((quantity, index) => {
-                const tier = index + 1;
-                const unitPrice = unit_cost[index];
-                const totalPrice = (quantity * unitPrice).toFixed(2);
+                // Mark best value (usually highest tier)
+                const isBestValue = index === qty.length - 1;
+                const bestMark = isBestValue ? ' ⭐' : '';
                 
-                pricingMessage += `Tier ${tier}: ${quantity.toLocaleString()} units × $${unitPrice.toFixed(3)} = **$${totalPrice}**\n`;
+                pricingMessage += `${quantity.toLocaleString()} pcs → $${unitPrice.toFixed(3)} each → *$${totalPrice}*${bestMark}\n`;
             });
+            pricingMessage += `\n`;
             
-            pricingMessage += `\n✨ **Best Value:** Tier ${qty.length} at $${unit_cost[qty.length - 1].toFixed(3)} per unit\n\n`;
-            
-            // Ask for PDF quote
-            pricingMessage += `📄 Would you like me to generate a detailed PDF quote for your records?\n\n`;
-            pricingMessage += `• Reply "Yes" or "PDF" to get your quote document\n`;
-            pricingMessage += `• Reply "No" to finish without the document`;
+            // Simple PDF offer
+            pricingMessage += `📄 *Get PDF Quote?*\n`;
+            pricingMessage += `Reply "Yes" for detailed document`;
 
             if (messageId) {
                 await this.sendMessageOnce(messageId, from, pricingMessage);
@@ -3941,16 +3924,23 @@ Have a great day! 🌟`;
                 pricingData: pricingData
             });
 
-            // Fallback message
-            await this.whatsappService.sendMessage(
-                from,
-                "Here's your pricing information:\n\n" +
-                `Quantities: ${pricingData.qty.join(', ')}\n` +
-                `Unit Costs: $${pricingData.unit_cost.join(', $')}\n\n` +
-                "📄 Would you like a PDF quote?\n" +
-                "• Reply 'Yes' or 'PDF' for your quote\n" +
-                "• Reply 'No' to finish"
-            );
+            // Simple fallback message with all tiers
+            let fallbackMessage = `🎯 *Quote Ready!*\n\n`;
+            
+            fallbackMessage += `💰 *Pricing Options*\n`;
+            pricingData.qty.forEach((quantity, index) => {
+                const unitPrice = pricingData.unit_cost[index];
+                const totalPrice = (quantity * unitPrice).toFixed(2);
+                const isBestValue = index === pricingData.qty.length - 1;
+                const bestMark = isBestValue ? ' ⭐' : '';
+                
+                fallbackMessage += `${quantity.toLocaleString()} pcs → $${unitPrice.toFixed(3)} each → *$${totalPrice}*${bestMark}\n`;
+            });
+            
+            fallbackMessage += `\n📄 *Get PDF Quote?*\n`;
+            fallbackMessage += `Reply "Yes" for detailed document`;
+            
+            await this.whatsappService.sendMessage(from, fallbackMessage);
         }
     }
 
