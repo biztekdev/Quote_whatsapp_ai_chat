@@ -692,7 +692,7 @@ class MessageHandler {
                                     console.log(`🎯 Product entity detected - Value: "${value || body}", Confidence: ${confidence}`);
                                     
                                     // Use slightly lower confidence for product detection to catch more cases
-                                    if (confidence < 0.6) {
+                                    if (confidence < 0.4) {
                                         console.log(`🚫 Product entity confidence too low (${confidence}) for auto-selection:`, value || body);
                                         // Still store as requested product for manual fallback
                                         updatedData.requestedProductName = value || body;
@@ -2404,10 +2404,8 @@ Would you like to get a quote for mylar bags today?`;
             bodyText += `\n`;
         }
         
-        // Show available products list
-        const productList = allProducts.map((product, index) => `${index + 1}. ${product.name}`).join('\n');
-        
-        bodyText += `Here are the available products in **${selectedCategory.name}**:\n\n${productList}\n\nPlease select a product by:\n• Typing the product name (e.g., "${allProducts[0].name}")\n• Or just the number (e.g., "1" for ${allProducts[0].name})`;
+        // Show available products request without numbered list
+        bodyText += `Here are the available products in **${selectedCategory.name}**. Please type the exact name of the product you want to quote (e.g., "${allProducts[0].name}").`;
 
         if (messageId) {
             await this.sendMessageOnce(messageId, from, bodyText);
@@ -2481,9 +2479,9 @@ Would you like to get a quote for mylar bags today?`;
                 return;
             }
 
-            // Check if it's a numeric selection (e.g., "1", "2", etc.)
+            // Check if it's a numeric selection (DISABLED - users must type product names)
             const numericSelection = parseInt(searchTerm);
-            if (!isNaN(numericSelection) && numericSelection > 0 && numericSelection <= products.length) {
+            if (false && !isNaN(numericSelection) && numericSelection > 0 && numericSelection <= products.length) {
                 selectedProduct = products[numericSelection - 1];
                 console.log(`🔢 Selected product by number: ${numericSelection} -> ${selectedProduct.name}`);
             } else {
@@ -2535,11 +2533,9 @@ Would you like to get a quote for mylar bags today?`;
                     
                     // Show available products list
                     if (products && products.length > 0) {
-                        const productList = products.map((p, index) => `${index + 1}. ${p.name}`).join('\n');
-                        
                         await this.whatsappService.sendMessage(
                             from,
-                            `Great! I see you need a quote for *${selectedCategory.name}* products. 📦\n\nHere are the available products:\n\n${productList}\n\nPlease type the name of the product you're interested in, or just the product number (e.g., "1" for ${products[0].name}).`
+                            `Great! I see you need a quote for *${selectedCategory.name}* products. 📦\n\nPlease type the exact name of the product you're interested in (e.g., "${products[0].name}").\n\n*Note: If you're unsure about product names, please contact our support team.*`
                         );
                     } else {
                         await this.whatsappService.sendMessage(
@@ -2647,9 +2643,10 @@ Would you like to get a quote for mylar bags today?`;
                         currentStep: nextStep
                     });
 
-                    // Process the next step
+                    // Process the next step without passing the confirmation text
                     const updatedState = await conversationService.getConversationState(from);
-                    await this.processConversationFlow(message, messageText, from, updatedState, false);
+                    const mockMessage = { id: 'dimension-confirmed-' + Date.now() };
+                    await this.processConversationFlow(mockMessage, '', from, updatedState, false);
                     return;
                     
                 } else {
@@ -2737,9 +2734,10 @@ Would you like to get a quote for mylar bags today?`;
                             currentStep: nextStep
                         });
 
-                        // Process the next step
+                        // Process the next step without passing the dimension input text
                         const updatedState = await conversationService.getConversationState(from);
-                        await this.processConversationFlow(message, messageText, from, updatedState, false);
+                        const mockMessage = { id: 'dimension-chatgpt-' + Date.now() };
+                        await this.processConversationFlow(mockMessage, '', from, updatedState, false);
                         return;
                     }
                 }
@@ -2860,9 +2858,10 @@ Would you like to get a quote for mylar bags today?`;
                                 currentStep: nextStep
                             });
 
-                            // Process the next step
+                            // Process the next step without passing the dimension input text
                             const updatedState = await conversationService.getConversationState(from);
-                            await this.processConversationFlow(message, messageText, from, updatedState, false);
+                            const mockMessage = { id: 'dimension-processed-' + Date.now() };
+                            await this.processConversationFlow(mockMessage, '', from, updatedState, false);
                             return;
                         }
                     }
@@ -3161,8 +3160,8 @@ Would you like to get a quote for mylar bags today?`;
             const trimmedText = messageText.trim();
             const listPosition = parseInt(trimmedText);
             
-            if (!isNaN(listPosition) && listPosition >= 1 && listPosition <= materials.length) {
-                // User selected by number (1-based indexing)
+            if (false && !isNaN(listPosition) && listPosition >= 1 && listPosition <= materials.length) {
+                // DISABLED: User selected by number (1-based indexing) to prevent "5x5" selecting material #5
                 selectedMaterial = materials[listPosition - 1];
                 console.log(`🔢 User selected material by number ${listPosition}: ${selectedMaterial.name}`);
             } else {
@@ -3297,24 +3296,14 @@ Would you like to get a quote for mylar bags today?`;
                 console.log(`❌ Material "${messageText}" not found in database, showing available options`);
                 
                 // Format available materials list
-                const materialsList = materials.map((material, index) => 
-                    `${index + 1}. ${material.name}`
-                ).join('\n');
-                
-                // Send message with available materials
+                // Send message asking for material name without numbered list
                 await this.whatsappService.sendMessage(
                     from,
                     `❌ I couldn't find "${messageText}" in our materials database.
 
-Here are the available materials for ${category.name}:
+Please type the exact name of the material you want to use for your ${category.name}.
 
-${materialsList}
-
-Please select a material by:
-• Typing the exact material name
-• Or typing the number (e.g., "1" for ${materials[0]?.name || 'first option'})
-
-*Note: We only use materials from our database to ensure accurate pricing and availability.*`
+*Note: We only use materials from our database to ensure accurate pricing and availability. If you're unsure about material names, please contact our support team.*`
                 );
                 return; // Don't proceed to next step
             }
@@ -3550,9 +3539,8 @@ Please select a material by:
                 console.log('❌ No finish found for:', messageText);
                 
                 let message = `Sorry, I couldn't find a finish called "${messageText}" in the ${conversationData.selectedCategory.name} category.\n\n`;
-                message += `Available finishes:\n`;
-                message += finishes.map((f, index) => `${index + 1}. ${f.name}`).join('\n');
-                message += `\n\nPlease type one of the finish names above.`;
+                message += `Please type the exact name of the finish you want to use.\n\n`;
+                message += `*Note: If you're unsure about available finish names, please contact our support team.*`;
 
                 await this.whatsappService.sendMessage(from, message);
             }
