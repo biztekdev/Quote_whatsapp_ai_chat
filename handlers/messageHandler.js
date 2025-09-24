@@ -3,8 +3,7 @@ import conversationService from '../services/conversationService.js';
 import WitService from '../services/witService.js';
 import mongoLogger from '../services/mongoLogger.js';
 import messageStatusService from '../services/messageStatusService.js';
-// Temporarily disabled for Vercel deployment fix
-// import voiceProcessingService from '../services/voiceProcessingService.js';
+import voiceProcessingService from '../services/voiceProcessingService.js';
 import { Product, ProductCategory } from '../models/productModel.js';
 import { Material } from '../models/materialModel.js';
 import { ProductFinish } from '../models/finishModel.js';
@@ -5147,19 +5146,6 @@ Would you like to:`;
                 duration: message.audio?.duration 
             });
 
-            // Temporarily disable voice processing for Vercel deployment
-            console.log('⚠️ Voice processing temporarily disabled for Vercel compatibility');
-            
-            // Send response directly without message tracking to avoid status errors
-            await this.whatsappService.sendMessage(
-                from,
-                "🎵 I received your voice message! Voice-to-text processing is temporarily unavailable while we fix some technical issues.\n\nPlease send your message as text instead, and I'll help you with your quote! 📝"
-            );
-            
-            return;
-
-            // TODO: Re-enable voice processing once Vercel issue is resolved
-            /*
             // Check if voice processing is available
             if (!voiceProcessingService.isAvailable()) {
                 console.log('⚠️ Voice processing not available - OpenAI API key not configured');
@@ -5172,8 +5158,7 @@ Would you like to:`;
             }
 
             // Send immediate acknowledgment
-            await this.sendMessageOnce(
-                message.id + '-audio-ack',
+            await this.whatsappService.sendMessage(
                 from,
                 "🎵 Got your voice message! Converting it to text... Please wait a moment."
             );
@@ -5189,8 +5174,7 @@ Would you like to:`;
             if (!voiceResult.success) {
                 console.error('❌ Voice processing failed:', voiceResult.error);
                 
-                await this.sendMessageOnce(
-                    message.id + '-audio-error',
+                await this.whatsappService.sendMessage(
                     from,
                     "Sorry, I couldn't understand your voice message. Could you please type your message instead? 📝\n\nOr try sending the voice message again - make sure you're in a quiet environment."
                 );
@@ -5201,8 +5185,7 @@ Would you like to:`;
             console.log('✅ Voice transcribed:', transcribedText);
 
             // Send transcription confirmation to user
-            await this.sendMessageOnce(
-                message.id + '-transcription',
+            await this.whatsappService.sendMessage(
                 from,
                 `🎯 I heard: "${transcribedText}"\n\nProcessing your request...`
             );
@@ -5236,7 +5219,6 @@ Would you like to:`;
                 duration: voiceResult.duration,
                 language: voiceResult.language
             });
-            */
 
         } catch (error) {
             console.error('❌ Error handling audio message:', error);
