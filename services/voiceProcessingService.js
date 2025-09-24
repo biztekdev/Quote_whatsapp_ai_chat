@@ -2,20 +2,30 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
-import fetch from 'node-fetch';
 import FormData from 'form-data';
 import mongoLogger from './mongoLogger.js';
 
 class VoiceProcessingService {
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        // Only initialize OpenAI if API key is present
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+        } else {
+            console.warn('⚠️ OPENAI_API_KEY not found - voice processing will be disabled');
+            this.openai = null;
+        }
         
-        // Create temp directory for audio files
+        // Create temp directory for audio files (only in non-serverless environments)
         this.tempDir = path.join(process.cwd(), 'temp', 'audio');
-        if (!fs.existsSync(this.tempDir)) {
-            fs.mkdirSync(this.tempDir, { recursive: true });
+        try {
+            if (!fs.existsSync(this.tempDir)) {
+                fs.mkdirSync(this.tempDir, { recursive: true });
+            }
+        } catch (error) {
+            console.warn('⚠️ Could not create temp directory - using /tmp for serverless');
+            this.tempDir = '/tmp';
         }
     }
 
@@ -25,6 +35,12 @@ class VoiceProcessingService {
     async downloadAudioFile(mediaUrl, accessToken) {
         try {
             console.log('📥 Downloading audio file from WhatsApp...');
+            
+            // Use built-in fetch (Node.js 18+) or fallback
+            const fetch = globalThis.fetch;
+            if (!fetch) {
+                throw new Error('Fetch API not available in this environment');
+            }
             
             const response = await fetch(mediaUrl, {
                 headers: {
@@ -36,11 +52,11 @@ class VoiceProcessingService {
                 throw new Error(`Failed to download audio: ${response.statusText}`);
             }
 
-            const buffer = await response.buffer();
+            const buffer = await response.arrayBuffer();
             const fileName = `audio_${Date.now()}.ogg`;
             const filePath = path.join(this.tempDir, fileName);
             
-            fs.writeFileSync(filePath, buffer);
+            fs.writeFileSync(filePath, Buffer.from(buffer));
             console.log('✅ Audio file downloaded:', fileName);
             
             return filePath;
@@ -59,46 +75,37 @@ class VoiceProcessingService {
      */
     async audioToText(audioFilePath) {
         try {
-            console.log('🎙️ Converting audio to text using Whisper...');
+            if (!this.openai) {
+                throw new Error('OpenAI not initialized - missing API key');
+            }
+
+            console.log('🎙️ Converting audio to text with Whisper...');
             
-            // Check if file exists and get size
-            const stats = fs.statSync(audioFilePath);
-            console.log(`📊 Audio file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+            const audioStream = fs.createReadStream(audioFilePath);
             
-            // Whisper supports many formats: mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg
             const transcription = await this.openai.audio.transcriptions.create({
-                file: fs.createReadStream(audioFilePath),
-                model: "whisper-1",
-                language: "en", // Can be auto-detected or specify: en, ur, ar, etc.
-                response_format: "json",
-                temperature: 0.0 // More deterministic output
+                file: audioStream,
+                model: 'whisper-1',
+                language: 'en', // Can be auto-detected by leaving this out
+                response_format: 'json'
             });
 
             console.log('✅ Audio transcribed successfully');
-            console.log('📝 Transcription:', transcription.text);
-
-            // Log the transcription
-            await mongoLogger.info('Voice transcription completed', {
-                source: 'whisper-transcription',
-                text: transcription.text,
-                duration: transcription.duration || 'unknown',
-                language: transcription.language || 'en'
-            });
-
+            
             return {
                 success: true,
-                text: transcription.text.trim(),
+                text: transcription.text,
                 language: transcription.language || 'en',
-                duration: transcription.duration
+                duration: transcription.duration || 0
             };
 
         } catch (error) {
             console.error('❌ Error transcribing audio:', error);
             await mongoLogger.logError(error, {
-                source: 'whisper-transcription',
+                source: 'voice-transcription',
                 audioFilePath: audioFilePath
             });
-
+            
             return {
                 success: false,
                 error: error.message,
@@ -108,83 +115,122 @@ class VoiceProcessingService {
     }
 
     /**
-     * Process WhatsApp voice message
+     * Get media URL for WhatsApp audio message
+     */
+    async getWhatsAppMediaUrl(mediaId, accessToken) {
+        try {
+            const fetch = globalThis.fetch;
+            if (!fetch) {
+                throw new Error('Fetch API not available in this environment');
+            }
+
+            const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to get media URL: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data.url;
+            
+        } catch (error) {
+            console.error('❌ Error getting WhatsApp media URL:', error);
+            await mongoLogger.logError(error, {
+                source: 'whatsapp-media-url',
+                mediaId: mediaId
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Main method to process voice messages
      */
     async processVoiceMessage(audioMessage, accessToken) {
-        let audioFilePath = null;
+        let tempFilePath = null;
         
         try {
-            console.log('🎵 Processing WhatsApp voice message...');
-            
-            // Download audio file from WhatsApp
-            audioFilePath = await this.downloadAudioFile(audioMessage.url || audioMessage.media_url, accessToken);
-            
-            // Convert to text
-            const transcriptionResult = await this.audioToText(audioFilePath);
-            
-            if (!transcriptionResult.success) {
+            if (!this.openai) {
                 return {
                     success: false,
-                    error: 'Failed to transcribe audio',
+                    error: 'Voice processing not available - OpenAI API key not configured',
                     text: null
                 };
             }
 
-            // Check if transcription is meaningful
-            if (!transcriptionResult.text || transcriptionResult.text.length < 3) {
-                return {
-                    success: false,
-                    error: 'Audio transcription too short or empty',
-                    text: transcriptionResult.text
-                };
+            console.log('🎵 Processing voice message:', audioMessage.id);
+            
+            // Step 1: Get media URL from WhatsApp
+            const mediaUrl = await this.getWhatsAppMediaUrl(audioMessage.id, accessToken);
+            console.log('📋 Got media URL from WhatsApp');
+            
+            // Step 2: Download audio file
+            tempFilePath = await this.downloadAudioFile(mediaUrl, accessToken);
+            
+            // Step 3: Convert to text
+            const transcriptionResult = await this.audioToText(tempFilePath);
+            
+            if (!transcriptionResult.success) {
+                return transcriptionResult;
             }
-
-            console.log('🎯 Voice processing completed successfully');
+            
+            // Step 4: Calculate cost (approximate)
+            const estimatedDuration = Math.max(1, transcriptionResult.duration || 30); // Default to 30 seconds
+            const estimatedCost = this.estimateCost(estimatedDuration);
+            
+            await mongoLogger.info('Voice message processed successfully', {
+                audioId: audioMessage.id,
+                transcribedText: transcriptionResult.text,
+                duration: estimatedDuration,
+                estimatedCost: estimatedCost,
+                language: transcriptionResult.language
+            });
             
             return {
                 success: true,
                 text: transcriptionResult.text,
                 language: transcriptionResult.language,
-                duration: transcriptionResult.duration,
-                originalAudio: {
-                    id: audioMessage.id,
-                    mime_type: audioMessage.mime_type,
-                    sha256: audioMessage.sha256
-                }
+                duration: estimatedDuration,
+                estimatedCost: estimatedCost
             };
-
+            
         } catch (error) {
             console.error('❌ Error processing voice message:', error);
             await mongoLogger.logError(error, {
-                source: 'voice-processing',
-                audioMessage: audioMessage
+                source: 'voice-processing-main',
+                audioMessageId: audioMessage.id
             });
-
+            
             return {
                 success: false,
                 error: error.message,
                 text: null
             };
+            
         } finally {
-            // Clean up temporary audio file
-            if (audioFilePath && fs.existsSync(audioFilePath)) {
+            // Cleanup: Delete temporary file
+            if (tempFilePath && fs.existsSync(tempFilePath)) {
                 try {
-                    fs.unlinkSync(audioFilePath);
-                    console.log('🗑️ Cleaned up temp audio file');
+                    fs.unlinkSync(tempFilePath);
+                    console.log('🧹 Temporary audio file cleaned up');
                 } catch (cleanupError) {
-                    console.error('⚠️ Failed to cleanup audio file:', cleanupError);
+                    console.error('⚠️ Failed to cleanup temp file:', cleanupError);
                 }
             }
         }
     }
 
     /**
-     * Alternative: Use Google Cloud Speech-to-Text (if you want to try free tier)
+     * Alternative: Use Google Speech-to-Text (free tier available)
+     * This is a placeholder for future implementation
      */
     async audioToTextGoogle(audioFilePath) {
-        // Implement Google Cloud Speech-to-Text if needed
-        // This would require: npm install @google-cloud/speech
-        throw new Error('Google Speech-to-Text not implemented. Use Whisper instead.');
+        // TODO: Implement Google Speech-to-Text as alternative
+        throw new Error('Google Speech-to-Text not implemented yet - use OpenAI Whisper');
     }
 
     /**
@@ -193,26 +239,39 @@ class VoiceProcessingService {
     getSupportedFormats() {
         return [
             'audio/ogg',
-            'audio/mpeg', // mp3
+            'audio/mpeg',
+            'audio/mp3',
             'audio/mp4',
             'audio/wav',
             'audio/webm',
-            'audio/amr' // WhatsApp voice messages
+            'audio/m4a'
         ];
     }
 
     /**
-     * Estimate cost for audio processing
+     * Estimate transcription cost (OpenAI Whisper pricing)
      */
     estimateCost(durationSeconds) {
-        // Whisper API costs $0.006 per minute
-        const minutes = Math.ceil(durationSeconds / 60);
-        const cost = minutes * 0.006;
-        
+        const pricePerMinute = 0.006; // $0.006 per minute
+        const durationMinutes = durationSeconds / 60;
+        return Math.round(durationMinutes * pricePerMinute * 1000) / 1000; // Round to 3 decimal places
+    }
+
+    /**
+     * Check if voice processing is available
+     */
+    isAvailable() {
+        return !!this.openai && !!process.env.OPENAI_API_KEY;
+    }
+
+    /**
+     * Check service health for testing
+     */
+    async checkServiceHealth() {
         return {
-            minutes: minutes,
-            estimatedCost: cost,
-            currency: 'USD'
+            openaiConfigured: !!this.openai,
+            apiKeyPresent: !!process.env.OPENAI_API_KEY,
+            tempDirectoryAvailable: fs.existsSync(this.tempDir)
         };
     }
 }

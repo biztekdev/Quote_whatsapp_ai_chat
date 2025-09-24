@@ -5146,6 +5146,18 @@ Would you like to:`;
                 duration: message.audio?.duration 
             });
 
+            // Check if voice processing is available
+            if (!voiceProcessingService.isAvailable()) {
+                console.log('⚠️ Voice processing not available - OpenAI API key not configured');
+                
+                await this.sendMessageOnce(
+                    message.id + '-no-voice-processing',
+                    from,
+                    "🎵 I received your voice message, but voice-to-text processing is currently not available. Please send your message as text instead. 📝"
+                );
+                return;
+            }
+
             // Send immediate acknowledgment
             await this.sendMessageOnce(
                 message.id + '-audio-ack',
