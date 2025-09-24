@@ -102,11 +102,13 @@ IMPORTANT - MATERIALS CONSTRAINT:
 You MUST only select materials from this exact list: [${materialsList}]
 - Do NOT create custom material names
 - Do NOT use materials not in this list
-- If user mentions "metallized", find materials containing "MPET" from the list
-- If user mentions "foil", find materials containing "Foil" from the list
+- ONLY extract materials if the user explicitly mentions material names or types
+- Do NOT infer materials from finishes (e.g., "foiling" is a FINISH, not a material)
+- If user mentions "metallized" as a material, find materials containing "MPET" from the list
+- If user mentions specific material like "foil" (not "foiling"), find materials containing "Foil" from the list
 - Always return the EXACT material name from the available list
-- If no match is found, return null for materials
-- Match user input to the closest material name from the available list`;
+- If no material is explicitly mentioned, return null for materials
+- Match user input to the closest material name from the available list ONLY when material is explicitly mentioned`;
       }
 
       const prompt = `
@@ -124,8 +126,8 @@ Return a JSON object with these fields (use null if not mentioned):
     "height": "number", // in inches  
     "depth": "number" // in inches, for 3D products
   },
-  "materials": ["array of strings"], // e.g., ["PET", "White PE"], ["holographic", "MPET"]
-  "finishes": ["array of strings"], // e.g., ["spot UV", "foil", "matte", "gloss", "soft touch"]
+  "materials": ["array of strings"], // ONLY if user explicitly mentions material names like "PET", "White PE", "metallized", etc. Do NOT infer from finishes!
+  "finishes": ["array of strings"], // e.g., ["spot UV", "foil", "matte", "gloss", "soft touch", "foiling", "hot foil"]
   "skus": "number", // number of different designs/SKUs
   "special_requirements": ["array of strings"], // e.g., ["white inside", "on roll"]
   "confidence_score": "number" // 0-1, how confident you are about the extraction
@@ -138,11 +140,14 @@ Key conversions:
 - "4*5inches" or "4x5" = width: 4, height: 5  
 - "4x6x2" = width: 4, height: 6, depth: 2
 - "Matt + spot uv" = ["matte", "spot UV"]
-- "PET + White PE" = ["PET", "White PE"]
+- "PET + White PE" = ["PET", "White PE"] (ONLY if user explicitly mentions these materials)
 - Extract individual materials, not compound strings
-- If "metallized" word is present in the message, the material must include "MPET"
+- IMPORTANT: "foiling", "hot foil", "cold foil" are FINISHES, not materials
+- If "metallized" word is mentioned as a material type, the material must include "MPET"
 - "standup pouches" = category: "mylar bag", product_type: "stand up pouch"
 - Map common product types to categories correctly
+
+CRITICAL: Only extract materials if user explicitly mentions material names. Do NOT infer materials from finishes or context.
 
 Only return the JSON object, no other text.`;
 
