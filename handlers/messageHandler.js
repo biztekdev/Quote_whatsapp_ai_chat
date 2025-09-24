@@ -765,7 +765,12 @@ class MessageHandler {
                                     break;
                                 case 'finishes:finishes':
                                     const finishes = value || body;
-                                    const findFinish = await this.findFinishByName(finishes);
+                                    
+                                    // Get categoryId for filtering
+                                    const categoryId = updatedData.selectedCategory?.id || currentConversationData.selectedCategory?.id || null;
+                                    console.log("🔍 Searching for finish with category filter:", { finishes, categoryId, fullMessage: messageText });
+                                    
+                                    const findFinish = await this.findFinishByName(finishes, categoryId, messageText);
                                     if (findFinish) {
                                         // Initialize selectedFinish array if it doesn't exist
                                         if (!updatedData.selectedFinish) {
@@ -779,7 +784,16 @@ class MessageHandler {
                                                 _id: findFinish.erp_id.toString(),
                                                 name: findFinish.name
                                             });
+                                            console.log("🚨 AUTO-SELECTED FINISH:", findFinish.name, "ERP ID:", findFinish.erp_id);
                                         }
+                                    } else {
+                                        // Store as requested finish for later processing
+                                        if (!updatedData.requestedFinish) {
+                                            updatedData.requestedFinish = finishes;
+                                        } else {
+                                            updatedData.requestedFinish += ` + ${finishes}`;
+                                        }
+                                        console.log("Finish not found in category, storing as requested:", finishes);
                                     }
                                     break;
                                 case 'material:material':
@@ -1041,21 +1055,122 @@ class MessageHandler {
         }
     }
 
-    async findFinishByName(finishName) {
+    async findFinishByName(finishName, categoryId = null, fullMessage = null) {
         try {
-            // Search all active finishes
-            const finishes = await ProductFinish.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            console.log("🔍 Searching for finish:", finishName, categoryId ? `in category: ${categoryId}` : 'across all categories');
             
-            // Search in name field
+            // Search finishes - filter by category if provided
+            const searchQuery = { isActive: true };
+            if (categoryId) {
+                searchQuery.productCategoryId = categoryId;
+            }
+            const finishes = await ProductFinish.find(searchQuery).sort({ sortOrder: 1, name: 1 });
+            console.log("🔍 Available finishes:", finishes.map(f => ({ name: f.name, erp_id: f.erp_id, categoryId: f.productCategoryId })));
+            
+            // Try exact match first
             let foundFinish = finishes.find(finish =>
-                finish.name.toLowerCase().includes(finishName.toLowerCase())
+                finish.name.toLowerCase() === finishName.toLowerCase()
             );
+            
+            if (foundFinish) {
+                console.log("✅ Found exact finish match:", foundFinish.name);
+                return foundFinish;
+            }
+            
+            // If no exact match, use ChatGPT to find the best match with full message context
+            if (!foundFinish && finishes.length > 0) {
+                console.log(`🤖 Using ChatGPT to find best finish match for: "${finishName}" in context: "${fullMessage || finishName}"`);
+                try {
+                    const context = {
+                        availableFinishes: finishes.map(f => ({ name: f.name, erp_id: f.erp_id })),
+                        categoryId: categoryId
+                    };
+                    
+                    // Use full message for better context extraction, fallback to finishName only
+                    const messageToAnalyze = fullMessage || `Find the best matching finish for: "${finishName}"`;
+                    
+                    const aiResponse = await this.aiService.processMessage(messageToAnalyze, context);
+                    
+                    console.log("🤖 ChatGPT finish analysis response:", JSON.stringify(aiResponse?.data?.entities || {}, null, 2));
+                    
+                    if (aiResponse.success && aiResponse.data?.entities?.['finishes:finishes'] && aiResponse.data.entities['finishes:finishes'].length > 0) {
+                        const suggestedFinishes = aiResponse.data.entities['finishes:finishes'];
+                        
+                        // Try to find any of the suggested finishes
+                        for (const suggestedFinishEntity of suggestedFinishes) {
+                            const suggestedFinish = suggestedFinishEntity.value || suggestedFinishEntity.body;
+                            foundFinish = finishes.find(f => 
+                                f.name.toLowerCase() === suggestedFinish.toLowerCase() ||
+                                f.name.toLowerCase().includes(suggestedFinish.toLowerCase()) ||
+                                suggestedFinish.toLowerCase().includes(f.name.toLowerCase())
+                            );
+                            
+                            if (foundFinish) {
+                                console.log(`🤖 ChatGPT found finish match: "${finishName}" → "${foundFinish.name}" (suggested: "${suggestedFinish}")`);
+                                break;
+                            }
+                        }
+                    }
+                } catch (aiError) {
+                    console.error('ChatGPT finish search failed:', aiError);
+                }
+            }
+            
+            // If not found in name, search for partial match
+            if (!foundFinish) {
+                foundFinish = finishes.find(finish =>
+                    finish.name.toLowerCase().includes(finishName.toLowerCase()) ||
+                    finishName.toLowerCase().includes(finish.name.toLowerCase())
+                );
+                
+                if (foundFinish) {
+                    console.log("✅ Found partial finish match:", foundFinish.name);
+                }
+            }
+            
+            // If still not found, try intelligent mapping for common terms
+            if (!foundFinish) {
+                const intelligentMappings = {
+                    'soft touch': 'Softtouch Finish',
+                    'softtouch': 'Softtouch Finish',
+                    'soft': 'Softtouch Finish',
+                    'foiling': 'Hot Foil',
+                    'foil': 'Hot Foil',
+                    'hot foil': 'Hot Foil',
+                    'cold foil': 'Cold Foil',
+                    'matte': 'Matte Finish',
+                    'matt': 'Matte Finish',
+                    'glossy': 'Gloss Finish',
+                    'gloss': 'Gloss Finish',
+                    'spot uv': 'Spot UV',
+                    'uv': 'Spot UV',
+                    'raised uv': '3D Raised Spot UV',
+                    '3d uv': '3D Raised Spot UV',
+                    'window': 'Window',
+                    'valve': 'Valve',
+                    'spout': 'Spout'
+                };
+                
+                const mapped = intelligentMappings[finishName.toLowerCase()];
+                if (mapped) {
+                    foundFinish = finishes.find(finish => 
+                        finish.name.toLowerCase() === mapped.toLowerCase()
+                    );
+                    if (foundFinish) {
+                        console.log(`🎯 Found intelligent mapped finish: "${finishName}" → "${foundFinish.name}"`);
+                    }
+                }
+            }
             
             // If not found in name, search in description
             if (!foundFinish) {
                 foundFinish = finishes.find(finish =>
                     finish.description && finish.description.toLowerCase().includes(finishName.toLowerCase())
                 );
+                
+                if (foundFinish) {
+                    console.log("✅ Found finish match in description:", foundFinish.name);
+                }
             }
             
             // If not found in description, search in erp_id
@@ -1063,9 +1178,13 @@ class MessageHandler {
                 const erpId = parseInt(finishName);
                 if (!isNaN(erpId)) {
                     foundFinish = finishes.find(finish => finish.erp_id === erpId);
+                    if (foundFinish) {
+                        console.log("✅ Found finish match by ERP ID:", foundFinish.name);
+                    }
                 }
             }
             
+            console.log("Finish search result:", foundFinish ? foundFinish.name : "Not found");
             return foundFinish;
         } catch (error) {
             console.error('Error finding finish by name:', error);
@@ -2259,7 +2378,15 @@ Would you like to get a quote for mylar bags today?`;
         
         message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
         message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
-        message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
+        
+        // Show finishes (both selected and requested)
+        let finishDisplay = 'Not specified';
+        if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+            finishDisplay = conversationData.selectedFinish.map(f => f.name).join(', ');
+        } else if (conversationData.requestedFinish) {
+            finishDisplay = `${conversationData.requestedFinish} (requested)`;
+        }
+        message += `✨ **Finishes:** ${finishDisplay}\n\n`;
         
         message += `Now I need the ${dimensionNames.length === 1 ? 'dimension' : 'dimensions'} for your product.\n\n`;
         
@@ -2663,7 +2790,16 @@ Would you like to get a quote for mylar bags today?`;
             message += `🔢 **Quantity:** ${conversationData.quantity?.join(', ') || 'Not specified'}\n`;
             message += `📏 **Dimensions:** ${conversationData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified'}\n`;
             message += `🎨 **SKUs/Designs:** ${conversationData.skus || 'Not specified'}\n`;
-            message += `✨ **Finishes:** ${conversationData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified'}\n\n`;
+            
+            // Show finishes (both selected and requested)
+            let finishDisplay = 'Not specified';
+            if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
+                finishDisplay = conversationData.selectedFinish.map(f => f.name).join(', ');
+            } else if (conversationData.requestedFinish) {
+                finishDisplay = `${conversationData.requestedFinish} (requested)`;
+            }
+            message += `✨ **Finishes:** ${finishDisplay}\n\n`;
+            
             message += `Type your material name.`;
 
             await this.whatsappService.sendMessage(from, message);
@@ -2858,25 +2994,31 @@ Would you like to get a quote for mylar bags today?`;
                     );
                 }
                 
-                // If no exact match, try partial matching in category materials
+                // If no exact match, use ChatGPT to find the best match
                 if (!selectedMaterial) {
-                    selectedMaterial = materials.find(m =>
-                        m.name.toLowerCase().includes(messageText.toLowerCase()) ||
-                        messageText.toLowerCase().includes(m.name.toLowerCase())
-                    );
-                }
-                
-                // Try matching individual words for complex descriptions in category materials
-                if (!selectedMaterial) {
-                    const messageWords = messageText.toLowerCase().split(/[\s,+\-_]+/).filter(word => word.length > 2);
-                    selectedMaterial = materials.find(m => {
-                        const materialWords = m.name.toLowerCase().split(/[\s,+\-_]+/).filter(word => word.length > 2);
-                        return messageWords.some(msgWord => 
-                            materialWords.some(matWord => 
-                                msgWord.includes(matWord) || matWord.includes(msgWord)
-                            )
+                    console.log(`🤖 Using ChatGPT to find best material match for: "${messageText}"`);
+                    try {
+                        const context = {
+                            availableMaterials: materials.map(m => ({ name: m.name, erp_id: m.erp_id })),
+                            categoryId: conversationData.selectedCategory.id
+                        };
+                        const aiResponse = await this.aiService.processMessage(
+                            `Find the best matching material for: "${messageText}"`, 
+                            context
                         );
-                    });
+                        
+                        if (aiResponse.success && aiResponse.data?.entities?.['material:material'] && aiResponse.data.entities['material:material'].length > 0) {
+                            const suggestedMaterial = aiResponse.data.entities['material:material'][0].value || aiResponse.data.entities['material:material'][0].body;
+                            selectedMaterial = materials.find(m => 
+                                m.name.toLowerCase() === suggestedMaterial.toLowerCase()
+                            );
+                            if (selectedMaterial) {
+                                console.log(`🤖 ChatGPT found material match: "${messageText}" → "${selectedMaterial.name}"`);
+                            }
+                        }
+                    } catch (aiError) {
+                        console.error('ChatGPT material search failed:', aiError);
+                    }
                 }
                 
                 // If still not found in category materials, make one more attempt within the category
@@ -3004,33 +3146,206 @@ Please select a material by:
 
     async handleFinishSelection(messageText, from, conversationData) {
         try {
-            // Check if finishes already exist
-            if (conversationData.selectedFinish && conversationData.selectedFinish.length > 0) {
-                console.log("Finishes already exist, bypassing finish selection step");
-
-                // Bypass finish_selection and move to next step
+            console.log('🎨 handleFinishSelection called:', {
+                messageText,
+                hasSelectedFinish: !!(conversationData.selectedFinish && conversationData.selectedFinish.length > 0),
+                selectedFinish: conversationData.selectedFinish,
+                selectedCategory: conversationData.selectedCategory?.name
+            });
+            
+            // Check if we already have finish selected
+            const hasFinish = conversationData.selectedFinish && conversationData.selectedFinish.length > 0;
+            
+            // If we already have finish, we shouldn't be here - move to next step
+            if (hasFinish) {
+                console.log('🎯 Finish already selected, moving to next step');
                 const nextStep = this.getNextStepAfterBypass('finish_selection', conversationData);
+                await conversationService.updateConversationState(from, {
+                    currentStep: nextStep
+                });
+                const updatedState = await conversationService.getConversationState(from);
+                const mockMessage = { id: 'finish-bypass-' + Date.now() };
+                await this.processConversationFlow(mockMessage, messageText, from, updatedState);
+                return;
+            }
 
+            // Check if we have required data
+            if (!conversationData.selectedCategory || !conversationData.selectedCategory.id) {
+                console.log("No selected category, asking for category selection");
+                await this.sendCategorySelection(from);
+                return;
+            }
+
+            if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
+                console.log("No selected product, asking for product selection");
+                await this.sendProductSelection(from);
+                return;
+            }
+
+            // Check if this is just asking for finish options (no specific finish provided)
+            const lowerText = messageText.toLowerCase().trim();
+            if (['finish', 'finishes', 'what finishes', 'show finishes', 'finish options'].some(keyword => lowerText === keyword)) {
+                console.log('🎨 User asking for finish options, showing available finishes');
+                await this.sendFinishRequest(from, conversationData);
+                return;
+            }
+
+            // User has provided a specific finish, process it
+            console.log('🔍 Processing user finish selection:', messageText);
+            
+            // Get categoryId for filtering finishes
+            const categoryId = conversationData.selectedCategory.id;
+            
+            // Get available finishes for this category
+            const finishes = await ProductFinish.find({
+                productCategoryId: categoryId,
+                isActive: true
+            }).sort({ sortOrder: 1, name: 1 });
+
+            if (!finishes || finishes.length === 0) {
+                await this.whatsappService.sendMessage(
+                    from,
+                    "Sorry, no finishes are available for this category. Please contact support."
+                );
+                return;
+            }
+
+            console.log('🔍 Available finishes for category:', finishes.map(f => f.name));
+
+            // Search for the finish in the category-filtered list
+            let selectedFinish = null;
+            
+            // Try exact match first
+            selectedFinish = finishes.find(f =>
+                f.name.toLowerCase() === messageText.toLowerCase()
+            );
+            
+            // If no exact match, use ChatGPT to find the best match
+            if (!selectedFinish) {
+                console.log(`🤖 Using ChatGPT to find best finish match for: "${messageText}"`);
+                try {
+                    const context = {
+                        availableFinishes: finishes.map(f => ({ name: f.name, erp_id: f.erp_id })),
+                        categoryId: categoryId
+                    };
+                    
+                    const aiResponse = await this.aiService.processMessage(messageText, context);
+                    
+                    console.log("🤖 ChatGPT finish analysis response:", JSON.stringify(aiResponse?.data?.entities || {}, null, 2));
+                    
+                    if (aiResponse.success && aiResponse.data?.entities?.['finishes:finishes'] && aiResponse.data.entities['finishes:finishes'].length > 0) {
+                        const suggestedFinishes = aiResponse.data.entities['finishes:finishes'];
+                        
+                        // Try to find any of the suggested finishes
+                        for (const suggestedFinishEntity of suggestedFinishes) {
+                            const suggestedFinish = suggestedFinishEntity.value || suggestedFinishEntity.body;
+                            selectedFinish = finishes.find(f => 
+                                f.name.toLowerCase() === suggestedFinish.toLowerCase() ||
+                                f.name.toLowerCase().includes(suggestedFinish.toLowerCase()) ||
+                                suggestedFinish.toLowerCase().includes(f.name.toLowerCase())
+                            );
+                            
+                            if (selectedFinish) {
+                                console.log(`🤖 ChatGPT found finish match: "${messageText}" → "${selectedFinish.name}" (suggested: "${suggestedFinish}")`);
+                                break;
+                            }
+                        }
+                    }
+                } catch (aiError) {
+                    console.error('ChatGPT finish search failed:', aiError);
+                }
+            }
+            
+            // If still not found, try partial match
+            if (!selectedFinish) {
+                selectedFinish = finishes.find(f =>
+                    f.name.toLowerCase().includes(messageText.toLowerCase()) ||
+                    messageText.toLowerCase().includes(f.name.toLowerCase())
+                );
+                
+                if (selectedFinish) {
+                    console.log(`✅ Found partial finish match: "${messageText}" → "${selectedFinish.name}"`);
+                }
+            }
+            
+            // If still not found, try intelligent mapping for common terms
+            if (!selectedFinish) {
+                const intelligentMappings = {
+                    'soft touch': 'Softtouch Finish',
+                    'softtouch': 'Softtouch Finish',
+                    'soft': 'Softtouch Finish',
+                    'foiling': 'Hot Foil',
+                    'foil': 'Hot Foil',
+                    'hot foil': 'Hot Foil',
+                    'cold foil': 'Cold Foil',
+                    'matte': 'Matte Finish',
+                    'matt': 'Matte Finish',
+                    'glossy': 'Gloss Finish',
+                    'gloss': 'Gloss Finish',
+                    'spot uv': 'Spot UV',
+                    'uv': 'Spot UV',
+                    'raised uv': '3D Raised Spot UV',
+                    '3d uv': '3D Raised Spot UV',
+                    'window': 'Window',
+                    'valve': 'Valve',
+                    'spout': 'Spout'
+                };
+                
+                const lowerMessage = messageText.toLowerCase();
+                for (const [key, value] of Object.entries(intelligentMappings)) {
+                    if (lowerMessage.includes(key)) {
+                        selectedFinish = finishes.find(f => 
+                            f.name.toLowerCase() === value.toLowerCase()
+                        );
+                        if (selectedFinish) {
+                            console.log(`🎯 Found intelligent mapped finish: "${key}" in "${messageText}" → "${selectedFinish.name}"`);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (selectedFinish) {
+                // Found a finish, update conversation data
+                const finishData = {
+                    _id: selectedFinish.erp_id.toString(),
+                    name: selectedFinish.name
+                };
+
+                await conversationService.updateConversationState(from, {
+                    'conversationData.selectedFinish': [finishData]
+                });
+
+                console.log('🎨 Selected finish:', selectedFinish.name);
+
+                await this.whatsappService.sendMessage(
+                    from,
+                    `Perfect! ✨ I've selected **${selectedFinish.name}** as your finish.\n\nMoving to the next step...`
+                );
+
+                // Move to next step
+                const nextStep = this.getNextStepAfterBypass('finish_selection', { ...conversationData, selectedFinish: [finishData] });
                 await conversationService.updateConversationState(from, {
                     currentStep: nextStep
                 });
 
                 // Process the next step
                 const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState, false);
-                return;
+                const mockMessage = { id: 'finish-found-' + Date.now() };
+                await this.processConversationFlow(mockMessage, messageText, from, updatedState);
+
+            } else {
+                // No finish found
+                console.log('❌ No finish found for:', messageText);
+                
+                let message = `Sorry, I couldn't find a finish called "${messageText}" in the ${conversationData.selectedCategory.name} category.\n\n`;
+                message += `Available finishes:\n`;
+                message += finishes.map((f, index) => `${index + 1}. ${f.name}`).join('\n');
+                message += `\n\nPlease type one of the finish names above.`;
+
+                await this.whatsappService.sendMessage(from, message);
             }
 
-            // Check if we have a selected product
-            if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
-                console.log("No selected product, asking for product selection");
-                await this.sendProductSelection(from);
-                return;
-            }
-            console.log("sending Finish Request",);
-
-            // We have a product, ask for finishes
-            await this.sendFinishRequest(from, conversationData);
         } catch (error) {
             console.error('Error in handleFinishSelection:', error);
             await mongoLogger.logError(error, {
@@ -4618,6 +4933,8 @@ Would you like to:`;
         
         return hasProductInfo || (hasNumbers && hasUnits);
     }
+
+
 
     // Helper function to determine if message is likely a material selection
     isLikelyMaterialSelectionMessage(messageText) {
