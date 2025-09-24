@@ -2772,6 +2772,16 @@ Would you like to get a quote for mylar bags today?`;
                 return;
             }
 
+            // IMPORTANT: Don't auto-search for materials in complex messages that aren't material-specific
+            // Only search if message is likely a direct material selection
+            const isLikelyMaterialMessage = this.isLikelyMaterialSelectionMessage(messageText);
+            
+            if (!isLikelyMaterialMessage) {
+                console.log('🚫 Message doesn\'t appear to be a material selection, asking user to choose material');
+                await this.sendMaterialRequest(from, conversationData.selectedCategory);
+                return;
+            }
+
             // User has provided material, process it
             const category = await this.findCategoryById(conversationData.selectedCategory.id);
 
@@ -4607,6 +4617,38 @@ Would you like to:`;
         const hasUnits = /(mm|cm|inches?|ft|feet|meters?|kg|g|lb|pounds?|pieces?|units?|pcs|k|thousand)/i.test(message);
         
         return hasProductInfo || (hasNumbers && hasUnits);
+    }
+
+    // Helper function to determine if message is likely a material selection
+    isLikelyMaterialSelectionMessage(messageText) {
+        const text = messageText.toLowerCase().trim();
+        
+        // Simple material names (likely material selection)
+        if (text.length < 50 && !text.includes('quantity') && !text.includes('size') && !text.includes('design')) {
+            console.log('🔍 Short message without quantity/size/design keywords - likely material selection');
+            return true;
+        }
+        
+        // Numeric selection (like "1", "2", "3" for material list)
+        if (/^\d+$/.test(text)) {
+            console.log('🔍 Numeric selection detected - likely material selection');
+            return true;
+        }
+        
+        // Contains material-specific keywords without other context
+        const materialKeywords = ['pet', 'pe', 'kraft', 'alu', 'mpet', 'metallized', 'holographic', 'foil'];
+        const hasOtherContext = text.includes('quantity') || text.includes('size') || text.includes('dimension') || 
+                               text.includes('finish') || text.includes('design') || text.includes('pouch') ||
+                               text.includes('bag') || text.includes('roll');
+        
+        if (materialKeywords.some(keyword => text.includes(keyword)) && !hasOtherContext) {
+            console.log('🔍 Material keyword found without other context - likely material selection');
+            return true;
+        }
+        
+        // Complex messages with multiple specifications are NOT material selections
+        console.log('🔍 Complex message with multiple specifications - NOT material selection');
+        return false;
     }
 
     isDimensionMessage(message) {
