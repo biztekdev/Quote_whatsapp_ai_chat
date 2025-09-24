@@ -3531,8 +3531,8 @@ What quantity would you like?`;
                 // Format quantities
                 const quantitiesText = conversationData.quantity?.join(', ') || 'Not specified';
 
-                // Format SKUs - default to 1 if not specified
-                const skusText = conversationData.skus ? conversationData.skus.toString() : '1';
+                // Format SKUs - show actual value or indicate it will default to 1
+                const skusText = conversationData.skus ? conversationData.skus.toString() : '1 (default)';
 
                 const acknowledgmentMessage = `Perfect! 🎯 Let me confirm your selections:
 
@@ -3663,7 +3663,7 @@ Need another quote? Just say "Hi" or "New Quote" anytime! 🌟`
                             const finishNames = updatedData.selectedFinish?.map(f => f.name).join(', ') || 'Not specified';
                             const dimensionsText = updatedData.dimensions?.map(d => `${d.name}: ${d.value}`).join(', ') || 'Not specified';
                             const quantitiesText = updatedData.quantity?.join(', ') || 'Not specified';
-                            const skusText = updatedData.skus ? updatedData.skus.toString() : '1';
+                            const skusText = updatedData.skus ? updatedData.skus.toString() : '1 (default)';
 
                             const updatedAcknowledgmentMessage = `Perfect! 🎯 Let me confirm your updated selections:
 
@@ -4180,7 +4180,7 @@ Have a great day! 🌟`;
                 ['Category:', conversationData.selectedCategory?.name || 'Not specified'],
                 ['Product Type:', conversationData.selectedProduct?.name || 'Not specified'],
                 ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
-                ['SKUs/Designs:', conversationData.skus?.toString() || '1'],
+                ['SKUs/Designs:', conversationData.skus?.toString() || '1 (default)'],
                 ['Estimated Turnaround:', '12 - 15 Business Days'],
                 ['Shipping Method:', 'DAP (Delivered At Place)']
             ];
@@ -4544,7 +4544,7 @@ Have a great day! 🌟`;
                 ['Job Name:', conversationData.selectedProduct?.name || 'Custom Product'],
                 ['Materials:', materialText],
                 ['Quantities:', quantityText],
-                ['No of SKU\'s:', conversationData.skus?.toString() || '1'],
+                ['No of SKU\'s:', conversationData.skus?.toString() || '1 (default)'],
                 ['Turnaround Time:', '12 - 15 Business Days (*T&C Applies)'],
                 ['Shipping:', 'DAP (Delivered At Place)'],
                 ['Finished Size:', conversationData.dimensions?.map(d => `${d.value}`).join(' x ') || 'Custom Size'],
