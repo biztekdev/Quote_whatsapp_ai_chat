@@ -66,16 +66,16 @@ const messageHandler = new MessageHandler(whatsappService, chatgptService);
 // await mongoLogger.info('Services initialized successfully!');
 
 // Initialize cron jobs
-if (dbConnected) {
-    try {
-        cronManager.start();
-        await mongoLogger.info('Cron jobs started successfully');
-    } catch (error) {
-        await mongoLogger.error('Failed to start cron jobs:', error);
-    }
-} else {
-    await mongoLogger.warn('Cron jobs not started - database not connected');
-}
+// if (dbConnected) {
+//     try {
+//         cronManager.start();
+//         await mongoLogger.info('Cron jobs started successfully');
+//     } catch (error) {
+//         await mongoLogger.error('Failed to start cron jobs:', error);
+//     }
+// } else {
+//     await mongoLogger.warn('Cron jobs not started - database not connected');
+// }
 
 // Routes
 app.get('/', (req, res) => {
