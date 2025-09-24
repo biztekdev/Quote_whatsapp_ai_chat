@@ -689,6 +689,16 @@ class MessageHandler {
                                     break;
 
                                 case 'product:product':
+                                    console.log(`🎯 Product entity detected - Value: "${value || body}", Confidence: ${confidence}`);
+                                    
+                                    // Use slightly lower confidence for product detection to catch more cases
+                                    if (confidence < 0.6) {
+                                        console.log(`🚫 Product entity confidence too low (${confidence}) for auto-selection:`, value || body);
+                                        // Still store as requested product for manual fallback
+                                        updatedData.requestedProductName = value || body;
+                                        break;
+                                    }
+
                                     // Only update product if not already selected (prevent overriding during material/finish selection)
                                     if (!currentConversationData.selectedProduct || !currentConversationData.selectedProduct.id) {
                                         // Search for product in Product schema
@@ -961,6 +971,12 @@ class MessageHandler {
                 }
             }
 
+            // Fallback: If no product was detected by AI, try manual product pattern matching
+            if (!updatedData.selectedProduct && !updatedData.requestedProductName && messageText) {
+                console.log("🔍 No product detected by AI, trying manual pattern matching...");
+                await this.tryManualProductDetection(messageText, updatedData);
+            }
+
             console.log("✅ Final Updated Conversation Data:", JSON.stringify(updatedData, null, 2));
             console.log("🔍 Checking for SKUs in final data:", {
                 hasSkus: !!updatedData.skus,
@@ -976,6 +992,74 @@ class MessageHandler {
             });
             // Return original data if extraction fails
             return currentConversationData;
+        }
+    }
+
+    /**
+     * Try to detect product names from message text using pattern matching
+     */
+    async tryManualProductDetection(messageText, updatedData) {
+        try {
+            console.log(`🔍 Manual product detection for: "${messageText}"`);
+            
+            // Common product name patterns
+            const productPatterns = [
+                /\b(flat\s*pouch)\b/i,
+                /\b(stand\s*up\s*pouch)\b/i,
+                /\b(standup\s*pouch)\b/i,
+                /\b(side\s*gusset\s*bag)\b/i,
+                /\b(bottom\s*gusset\s*bag)\b/i,
+                /\b(roll\s*stock)\b/i,
+                /\b(spouted\s*pouch)\b/i,
+                /\b(zipper\s*pouch)\b/i,
+                /\b(valve\s*bag)\b/i
+            ];
+
+            let detectedProduct = null;
+            
+            for (const pattern of productPatterns) {
+                const match = messageText.match(pattern);
+                if (match) {
+                    const productName = match[1];
+                    console.log(`🎯 Pattern matched: "${productName}"`);
+                    
+                    // Try to find this product in database
+                    const foundProduct = await this.findProductByName(productName, updatedData);
+                    if (foundProduct) {
+                        console.log(`✅ Manual detection found product: ${foundProduct.name}`);
+                        
+                        updatedData.selectedProduct = {
+                            id: foundProduct._id.toString(),
+                            erp_id: foundProduct.erp_id,
+                            name: foundProduct.name,
+                            description: foundProduct.description,
+                            basePrice: foundProduct.basePrice
+                        };
+                        
+                        // Also set category from product
+                        const foundCategory = await this.findCategoryById(foundProduct.categoryId);
+                        if (foundCategory) {
+                            updatedData.selectedCategory = {
+                                id: foundCategory._id.toString(),
+                                erp_id: foundCategory.erp_id,
+                                name: foundCategory.name,
+                                description: foundCategory.description
+                            };
+                            console.log(`✅ Auto-detected category from product: ${foundCategory.name}`);
+                        }
+                        
+                        detectedProduct = foundProduct;
+                        break;
+                    }
+                }
+            }
+
+            if (!detectedProduct) {
+                console.log("❌ No product patterns matched in manual detection");
+            }
+            
+        } catch (error) {
+            console.error('Error in manual product detection:', error);
         }
     }
 
@@ -1113,27 +1197,66 @@ class MessageHandler {
      */
     async findProductByName(productName, conversationData = {}) {
         try {
+            console.log(`🔍 Searching for product: "${productName}"`);
+            
             // Search all active products
             const products = await Product.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            console.log(`📋 Available products: ${products.map(p => p.name).join(', ')}`);
 
-            // Search in name field
+            // Normalize search term for better matching
+            const normalizedSearch = productName.toLowerCase().trim();
+
+            // 1. Try exact name match first
             let foundProduct = products.find(product =>
-                product.name.toLowerCase().includes(productName.toLowerCase())
+                product.name.toLowerCase() === normalizedSearch
             );
 
-            // If not found in name, search in description
+            // 2. Try name contains search (existing logic)
             if (!foundProduct) {
                 foundProduct = products.find(product =>
-                    product.description && product.description.toLowerCase().includes(productName.toLowerCase())
+                    product.name.toLowerCase().includes(normalizedSearch)
                 );
             }
 
-            // If not found in description, search in erp_id
+            // 3. Try reverse contains (search term contains product name)
+            if (!foundProduct) {
+                foundProduct = products.find(product => {
+                    const productWords = product.name.toLowerCase().split(/\s+/);
+                    return productWords.some(word => normalizedSearch.includes(word) && word.length > 2);
+                });
+            }
+
+            // 4. Try word-by-word matching for compound names like "flat pouch"
+            if (!foundProduct) {
+                const searchWords = normalizedSearch.split(/\s+/);
+                foundProduct = products.find(product => {
+                    const productWords = product.name.toLowerCase().split(/\s+/);
+                    return searchWords.length >= 2 && 
+                           searchWords.every(word => 
+                               productWords.some(pWord => pWord.includes(word) || word.includes(pWord))
+                           );
+                });
+            }
+
+            // 5. If not found in name, search in description
+            if (!foundProduct) {
+                foundProduct = products.find(product =>
+                    product.description && product.description.toLowerCase().includes(normalizedSearch)
+                );
+            }
+
+            // 6. If not found in description, search in erp_id
             if (!foundProduct) {
                 const erpId = parseInt(productName);
                 if (!isNaN(erpId)) {
                     foundProduct = products.find(product => product.erp_id === erpId);
                 }
+            }
+
+            if (foundProduct) {
+                console.log(`✅ Found product match: "${foundProduct.name}" (ERP: ${foundProduct.erp_id})`);
+            } else {
+                console.log(`❌ No product match found for: "${productName}"`);
             }
 
             return foundProduct;
