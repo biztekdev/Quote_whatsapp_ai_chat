@@ -23,7 +23,6 @@ import authRoutes from './api/authRoutes.js';
 import { authenticateToken } from './middleware/auth.js';
 import erpSyncRoutes from './api/erpSyncRoutes.js';
 import cronManager from './cron/index.js';
-import { ProcessedMessage } from './models/processedMessageModel.js';
 
 // Load environment variables
 dotenv.config();
