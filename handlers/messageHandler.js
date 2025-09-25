@@ -412,7 +412,7 @@ class MessageHandler {
                 }
             }
 
-            // Extract and update conversation data with entities
+            // Extract and update conversation data using improved fuzzy search approach
             // Skip entity extraction for quote_generation, material_selection, and finish_selection to prevent unwanted overrides
             // Allow entity extraction for greeting_response when it contains product info
             let updatedConversationData = conversationState.conversationData || {};
@@ -423,12 +423,12 @@ class MessageHandler {
                                           (messageText.toLowerCase().includes('yes') || messageText.toLowerCase().includes('no')));
                                           
             if (shouldExtractEntities) {
-                updatedConversationData = await this.extractAndUpdateConversationData(
-                aiResponse.data.entities,
+                updatedConversationData = await this.smartExtractAndUpdateConversationData(
+                    messageText,
                     conversationState.conversationData || {},
-                    messageText
-            );
-                console.log("🎯 Entity extraction performed for step:", conversationState.currentStep, "message:", messageText);
+                    aiResponse.data.entities
+                );
+                console.log("🎯 Smart entity extraction performed for step:", conversationState.currentStep, "message:", messageText);
             } else {
                 console.log("🎯 Skipping entity extraction for response step:", conversationState.currentStep, "message:", messageText);
             }
@@ -568,6 +568,649 @@ class MessageHandler {
     }
 
     /**
+     * Smart entity extraction using single ChatGPT call with full context
+     */
+    async smartExtractAndUpdateConversationData(messageText, currentConversationData, aiEntities) {
+        try {
+            console.log("🧠 Starting smart extraction for:", messageText);
+            
+            // Skip entity processing only for simple greetings without product information
+            if (messageText && this.isGreeting(messageText) && !this.hasProductInformation(messageText)) {
+                console.log("🎯 Skipping smart extraction for simple greeting message:", messageText);
+                return currentConversationData;
+            }
+
+            const updatedData = { ...currentConversationData };
+            let foundCategory = null;
+            let foundProduct = null;
+
+            // Step 1: Try fuzzy search for category first
+            console.log("🔍 Step 1: Searching for category in message...");
+            foundCategory = await this.fuzzySearchCategory(messageText);
+            
+            if (foundCategory) {
+                console.log("✅ Found category via fuzzy search:", foundCategory.name);
+                updatedData.selectedCategory = {
+                    id: foundCategory._id.toString(),
+                    erp_id: foundCategory.erp_id,
+                    name: foundCategory.name,
+                    description: foundCategory.description
+                };
+            }
+
+            // Step 2: If no category found, try fuzzy search for product and get its category
+            if (!foundCategory) {
+                console.log("🔍 Step 2: No category found, searching for product...");
+                foundProduct = await this.fuzzySearchProduct(messageText);
+                
+                if (foundProduct) {
+                    console.log("✅ Found product via fuzzy search:", foundProduct.name);
+                    
+                    // Get category from product relationship
+                    const productCategory = await this.findCategoryById(foundProduct.categoryId);
+                    if (productCategory) {
+                        console.log("✅ Got category from product relationship:", productCategory.name);
+                        foundCategory = productCategory;
+                        updatedData.selectedCategory = {
+                            id: productCategory._id.toString(),
+                            erp_id: productCategory.erp_id,
+                            name: productCategory.name,
+                            description: productCategory.description
+                        };
+                    }
+                    
+                    updatedData.selectedProduct = {
+                        id: foundProduct._id.toString(),
+                        erp_id: foundProduct.erp_id,
+                        name: foundProduct.name,
+                        description: foundProduct.description,
+                        basePrice: foundProduct.basePrice,
+                        dimensionFields: foundProduct.dimensionFields
+                    };
+                }
+            }
+
+            // Step 3: If we have a category, make SINGLE ChatGPT call with ALL context
+            if (foundCategory) {
+                console.log("🧠 Step 3: Making SINGLE ChatGPT call with full context...");
+                
+                try {
+                    // Get ALL materials for this category
+                    const categoryMaterials = await Material.find({
+                        categoryId: foundCategory._id,
+                        isActive: true
+                    }).sort({ sortOrder: 1, name: 1 });
+
+                    // Get ALL finishes for this category  
+                    const categoryFinishes = await ProductFinish.find({
+                        productCategoryId: foundCategory._id,
+                        isActive: true
+                    }).sort({ sortOrder: 1, name: 1 });
+
+                    console.log(`🔍 Available materials for ${foundCategory.name}:`, categoryMaterials.map(m => `${m.name} (ID: ${m.erp_id})`));
+                    console.log(`🔍 Available finishes for ${foundCategory.name}:`, categoryFinishes.map(f => `${f.name} (ID: ${f.erp_id})`));
+
+                    // Create enhanced context with ALL available options
+                    const enhancedContext = `
+IMPORTANT: You are processing a quote request for "${foundCategory.name}" category.
+
+AVAILABLE MATERIALS (choose ONLY from these):
+${categoryMaterials.map(m => `- "${m.name}" (ID: ${m.erp_id})`).join('\n')}
+
+AVAILABLE FINISHES (choose ONLY from these):
+${categoryFinishes.map(f => `- "${f.name}" (ID: ${f.erp_id})`).join('\n')}
+
+${foundProduct ? `DETECTED PRODUCT: "${foundProduct.name}"` : ''}
+
+RULES:
+1. For materials: ONLY select from the available materials list above
+2. For finishes: ONLY select from the available finishes list above  
+3. If a word like "holographic" appears, check if it matches any material name (like "PET + CD holographic PET + PE")
+4. Extract quantities, dimensions, SKUs as usual
+5. Return standard wit.ai format with entities
+
+Please extract all entities from the user message, selecting materials and finishes ONLY from the provided lists.`;
+
+                    // SINGLE ChatGPT call with full context
+                    console.log(`🤖 Making SINGLE ChatGPT call: "${messageText}"`);
+                    let enhancedEntities = null;
+                    
+                    try {
+                        const enhancedAiResponse = await this.aiService.processMessage(messageText, enhancedContext);
+                        console.log("📊 SINGLE ChatGPT response:", JSON.stringify(enhancedAiResponse?.data?.entities || {}, null, 2));
+                        enhancedEntities = enhancedAiResponse?.data?.entities || null;
+                    } catch (chatGptError) {
+                        console.error("❌ SINGLE ChatGPT call failed:", chatGptError.message);
+                        enhancedEntities = null;
+                    }
+
+                    // If ChatGPT failed, use manual extraction as fallback
+                    if (!enhancedEntities) {
+                        console.log("🔄 Using manual extraction as fallback");
+                        enhancedEntities = await this.manualEntityExtraction(messageText, foundCategory, categoryMaterials, categoryFinishes);
+                    }
+                    
+                    // Process entities with enhanced context
+                    await this.processRemainingEntities(enhancedEntities, updatedData, messageText, foundCategory);
+
+                } catch (contextError) {
+                    console.error("❌ Error in single ChatGPT call approach:", contextError);
+                    // Fallback to manual extraction
+                    const fallbackEntities = await this.manualEntityExtraction(messageText, foundCategory, [], []);
+                    await this.processRemainingEntities(fallbackEntities, updatedData, messageText, foundCategory);
+                }
+            } else {
+                console.log("⚠️ No category found, using manual extraction fallback");
+                const fallbackEntities = await this.manualEntityExtraction(messageText, null, [], []);
+                await this.processRemainingEntities(fallbackEntities, updatedData, messageText, null);
+            }
+
+            // Auto-set wantsQuote for greetings with product info
+            if (messageText && this.isGreeting(messageText) && (foundCategory || foundProduct)) {
+                updatedData.wantsQuote = true;
+                console.log("🎯 Auto-setting wantsQuote=true for greeting with product info");
+            }
+
+            console.log("✅ Smart extraction completed with SINGLE ChatGPT call:", JSON.stringify(updatedData, null, 2));
+            return updatedData;
+
+        } catch (error) {
+            console.error('Error in smartExtractAndUpdateConversationData:', error);
+            await mongoLogger.logError(error, {
+                source: 'smart-extract-conversation-data',
+                messageText: messageText
+            });
+            // Fallback to original extraction method
+            return await this.extractAndUpdateConversationData(aiEntities, currentConversationData, messageText);
+        }
+    }
+
+    /**
+     * Manual entity extraction when ChatGPT fails
+     */
+    async manualEntityExtraction(messageText, foundCategory, categoryMaterials, categoryFinishes) {
+        console.log("🔧 Starting manual entity extraction for:", messageText);
+        const entities = {};
+        const lowerMessage = messageText.toLowerCase();
+
+        // Extract quantities
+        const quantityMatches = messageText.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/gi);
+        if (quantityMatches) {
+            entities['quantities:quantities'] = quantityMatches.map(match => {
+                let value = match.replace(/,/g, '');
+                if (value.toLowerCase().includes('k')) {
+                    const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
+                    if (kMatch) {
+                        value = parseFloat(kMatch[1]) * 1000;
+                    }
+                } else {
+                    value = parseInt(value);
+                }
+                return {
+                    body: match,
+                    confidence: 0.9,
+                    value: value,
+                    type: "value"
+                };
+            });
+            console.log("📊 Manual quantity extraction:", entities['quantities:quantities']);
+        }
+
+        // Extract dimensions
+        const dimensionMatches = messageText.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/gi);
+        if (dimensionMatches) {
+            entities['dimensions:dimensions'] = dimensionMatches.map(match => ({
+                body: match,
+                confidence: 0.9,
+                value: match,
+                type: "value"
+            }));
+            console.log("📏 Manual dimension extraction:", entities['dimensions:dimensions']);
+        }
+
+        // Extract SKUs
+        const skuMatches = messageText.match(/(\d+)\s*skus?/gi);
+        if (skuMatches) {
+            entities['skus:skus'] = skuMatches.map(match => {
+                const skuNumber = match.match(/(\d+)/)[1];
+                return {
+                    body: skuNumber,
+                    confidence: 0.9,
+                    value: parseInt(skuNumber),
+                    type: "value"
+                };
+            });
+            console.log("🎨 Manual SKU extraction:", entities['skus:skus']);
+        }
+
+        // Extract materials (if category is available)
+        if (foundCategory && categoryMaterials.length > 0) {
+            const materialEntities = [];
+            
+            // Check for holographic specifically (highest priority)
+            if (lowerMessage.includes('holographic')) {
+                const holographicMaterial = categoryMaterials.find(m => 
+                    m.name.toLowerCase().includes('holographic')
+                );
+                if (holographicMaterial) {
+                    materialEntities.push({
+                        body: 'holographic',
+                        confidence: 0.95,
+                        value: 'holographic',
+                        type: "value"
+                    });
+                    console.log("🎯 Manual holographic material detection:", holographicMaterial.name);
+                }
+            }
+
+            // Check for metallized/metallic
+            if (lowerMessage.includes('metallized') || lowerMessage.includes('metallic')) {
+                const metallicMaterial = categoryMaterials.find(m => 
+                    m.name.toLowerCase().includes('mpet') || 
+                    m.name.toLowerCase().includes('metallic') || 
+                    m.name.toLowerCase().includes('metallized')
+                );
+                if (metallicMaterial) {
+                    const keyword = lowerMessage.includes('metallized') ? 'metallized' : 'metallic';
+                    materialEntities.push({
+                        body: keyword,
+                        confidence: 0.9,
+                        value: keyword,
+                        type: "value"
+                    });
+                    console.log(`🧱 Manual metallic material detection: ${keyword} -> ${metallicMaterial.name}`);
+                }
+            }
+
+            // Check for other material keywords
+            const materialKeywords = [
+                { keyword: 'kraft', searchTerms: ['kraft'] },
+                { keyword: 'pet', searchTerms: ['pet'] },
+                { keyword: 'pe', searchTerms: ['pe', 'polyethylene'] },
+                { keyword: 'mpet', searchTerms: ['mpet'] },
+                { keyword: 'foil', searchTerms: ['foil', 'alu foil', 'alfoil'] },
+                { keyword: 'paper', searchTerms: ['paper'] }
+            ];
+            
+            for (const materialKeyword of materialKeywords) {
+                if (materialKeyword.searchTerms.some(term => lowerMessage.includes(term))) {
+                    const foundMaterial = categoryMaterials.find(m => 
+                        materialKeyword.searchTerms.some(term => 
+                            m.name.toLowerCase().includes(term)
+                        )
+                    );
+                    if (foundMaterial) {
+                        // Avoid duplicates
+                        const alreadyAdded = materialEntities.some(entity => 
+                            entity.value === materialKeyword.keyword
+                        );
+                        if (!alreadyAdded) {
+                            materialEntities.push({
+                                body: materialKeyword.keyword,
+                                confidence: 0.8,
+                                value: materialKeyword.keyword,
+                                type: "value"
+                            });
+                            console.log(`🧱 Manual material detection: ${materialKeyword.keyword} -> ${foundMaterial.name}`);
+                        }
+                    }
+                }
+            }
+
+            if (materialEntities.length > 0) {
+                entities['material:material'] = materialEntities;
+            }
+        }
+
+        // Extract finishes (if category is available)
+        if (foundCategory && categoryFinishes.length > 0) {
+            const finishEntities = [];
+            
+            // Define material keywords that should NOT be treated as finishes
+            const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'foil', 'paper', 'polyethylene'];
+            
+            // Common finish keywords (excluding material keywords)
+            const finishKeywords = ['spot uv', 'uv coating', 'matte', 'gloss', 'emboss', 'deboss', 'varnish', 'lamination'];
+            
+            for (const keyword of finishKeywords) {
+                if (lowerMessage.includes(keyword)) {
+                    // Double check this isn't a material keyword
+                    const isMaterialKeyword = materialKeywords.some(matKeyword => 
+                        keyword.toLowerCase().includes(matKeyword) || 
+                        lowerMessage.includes(matKeyword + ' ' + keyword) ||
+                        lowerMessage.includes(keyword + ' ' + matKeyword)
+                    );
+                    
+                    if (!isMaterialKeyword) {
+                        const foundFinish = categoryFinishes.find(f => 
+                            f.name.toLowerCase().includes(keyword)
+                        );
+                        if (foundFinish) {
+                            finishEntities.push({
+                                body: keyword,
+                                confidence: 0.85,
+                                value: keyword,
+                                type: "value"
+                            });
+                            console.log(`✨ Manual finish detection: ${keyword} -> ${foundFinish.name}`);
+                        }
+                    } else {
+                        console.log(`🚫 Skipped "${keyword}" - identified as material keyword, not finish`);
+                    }
+                }
+            }
+
+            if (finishEntities.length > 0) {
+                entities['finishes:finishes'] = finishEntities;
+            }
+        }
+
+        console.log("🔧 Manual extraction completed:", JSON.stringify(entities, null, 2));
+        return entities;
+    }
+
+    /**
+     * Process remaining entities (dimensions, quantities, materials, finishes, SKUs)
+     */
+    async processRemainingEntities(entities, updatedData, messageText, foundCategory) {
+        console.log("🔄 Processing remaining entities:", Object.keys(entities));
+
+        const entityProcessingOrder = [
+            'dimensions:dimensions',
+            'quantities:quantities',
+            'material:material',
+            'finishes:finishes',
+            'skus:skus'
+        ];
+
+        for (const entityType of entityProcessingOrder) {
+            if (entities[entityType] && Array.isArray(entities[entityType])) {
+                for (const entity of entities[entityType]) {
+                    const { value, confidence, body } = entity;
+                    console.log(`🔍 Processing ${entityType}:`, { value, confidence, body });
+
+                    if (confidence > 0.5) {
+                        await this.processEntityByType(entityType, entity, updatedData, messageText, foundCategory);
+                    }
+                }
+            }
+        }
+
+        // Post-processing: Check if any finishes should actually be materials
+        if (foundCategory && entities['finishes:finishes']) {
+            await this.correctMisclassifiedMaterials(entities, updatedData, foundCategory);
+        }
+    }
+
+    /**
+     * Process individual entity by type
+     */
+    async processEntityByType(entityType, entity, updatedData, messageText, foundCategory) {
+        const { value, confidence, body } = entity;
+
+        switch (entityType) {
+            case 'dimensions:dimensions':
+                const dimensions = value || body;
+                const dimensionValues = this.parseDimensionValues(dimensions);
+                
+                if (updatedData.selectedProduct && dimensionValues.length > 0) {
+                    const product = await conversationService.getProductById(updatedData.selectedProduct.id);
+                    if (product && product.dimensionFields) {
+                        if (!updatedData.dimensions) updatedData.dimensions = [];
+                        
+                        product.dimensionFields.forEach((field, index) => {
+                            if (dimensionValues[index] !== undefined) {
+                                const existingDimension = updatedData.dimensions.find(d => d.name === field.name);
+                                if (!existingDimension) {
+                                    updatedData.dimensions.push({
+                                        name: field.name,
+                                        value: dimensionValues[index]
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }
+                break;
+
+            case 'quantities:quantities':
+                if (!this.isDimensionMessage(messageText)) {
+                    const quantities = Array.isArray(entity) ? entity.map(e => e.value || e.body) : [value || body];
+                    if (!updatedData.quantity) updatedData.quantity = [];
+                    
+                    for (const quantity of quantities) {
+                        const cleanQuantity = quantity.toString().replace(/,/g, '');
+                        let numericQuantity = parseInt(cleanQuantity);
+                        
+                        if (cleanQuantity.toLowerCase().includes('k')) {
+                            const kMatch = cleanQuantity.toLowerCase().match(/(\d+(?:\.\d+)?)k/);
+                            if (kMatch) {
+                                numericQuantity = parseFloat(kMatch[1]) * 1000;
+                            }
+                        }
+                        
+                        if (!isNaN(numericQuantity) && !updatedData.quantity.includes(numericQuantity)) {
+                            updatedData.quantity.push(numericQuantity);
+                            console.log(`✅ Added quantity: ${numericQuantity}`);
+                        }
+                    }
+                }
+                break;
+
+            case 'material:material':
+                if (confidence >= 0.5) { // Lower threshold for materials
+                    const materials = Array.isArray(entity) ? entity.map(e => e.value || e.body) : [value || body];
+                    
+                    if (foundCategory) {
+                        const foundMaterials = [];
+                        for (const material of materials) {
+                            const findMaterial = await this.findMaterialByName(material, foundCategory._id.toString());
+                            if (findMaterial) {
+                                foundMaterials.push({
+                                    _id: findMaterial.erp_id.toString(),
+                                    name: findMaterial.name,
+                                    erp_id: findMaterial.erp_id
+                                });
+                                console.log("🚨 SMART-SELECTED MATERIAL:", findMaterial.name);
+                            } else {
+                                // Store as requested material for manual matching later
+                                if (!updatedData.requestedMaterial) {
+                                    updatedData.requestedMaterial = material;
+                                } else {
+                                    updatedData.requestedMaterial += ` + ${material}`;
+                                }
+                                console.log("🔍 Material not found in database, storing as requested:", material);
+                            }
+                        }
+                        if (foundMaterials.length > 0) {
+                            updatedData.selectedMaterial = foundMaterials;
+                        }
+                    }
+                }
+                break;
+
+            case 'finishes:finishes':
+                const finishes = value || body;
+                const categoryId = foundCategory?._id?.toString();
+                
+                const findFinish = await this.findFinishByName(finishes, categoryId, messageText);
+                if (findFinish) {
+                    if (!updatedData.selectedFinish) updatedData.selectedFinish = [];
+                    
+                    const finishExists = updatedData.selectedFinish.some(f => f._id === findFinish.erp_id.toString());
+                    if (!finishExists) {
+                        updatedData.selectedFinish.push({
+                            _id: findFinish.erp_id.toString(),
+                            name: findFinish.name
+                        });
+                        console.log("🚨 SMART-SELECTED FINISH:", findFinish.name);
+                    }
+                }
+                break;
+
+            case 'skus:skus':
+                const skuValue = value || body;
+                const cleanSku = skuValue.toString().replace(/,/g, '');
+                const skuNum = parseInt(cleanSku);
+                
+                updatedData.skus = !isNaN(skuNum) ? skuNum : skuValue;
+                console.log("✅ Stored SKU:", updatedData.skus);
+                break;
+        }
+    }
+
+    /**
+     * Correct misclassified materials that were tagged as finishes
+     */
+    async correctMisclassifiedMaterials(entities, updatedData, foundCategory) {
+        console.log("🔍 Checking for misclassified materials in finishes...");
+        
+        const finishEntities = entities['finishes:finishes'] || [];
+        const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'foil', 'paper'];
+        
+        for (const finishEntity of finishEntities) {
+            const finishValue = (finishEntity.value || finishEntity.body).toLowerCase();
+            
+            // Check if this "finish" is actually a material keyword
+            if (materialKeywords.some(keyword => finishValue.includes(keyword))) {
+                console.log(`🔄 Checking if "${finishValue}" should be a material instead of finish...`);
+                
+                // Try to find this as a material
+                const foundMaterial = await this.findMaterialByName(finishValue, foundCategory._id.toString());
+                
+                if (foundMaterial) {
+                    console.log(`✅ CORRECTED: "${finishValue}" is a material, not a finish!`);
+                    
+                    // Add to materials
+                    if (!updatedData.selectedMaterial) {
+                        updatedData.selectedMaterial = [];
+                    }
+                    
+                    const materialExists = updatedData.selectedMaterial.some(m => m.erp_id === foundMaterial.erp_id);
+                    if (!materialExists) {
+                        updatedData.selectedMaterial.push({
+                            _id: foundMaterial.erp_id.toString(),
+                            name: foundMaterial.name,
+                            erp_id: foundMaterial.erp_id
+                        });
+                    }
+                    
+                    // Remove from finishes if it was added there
+                    if (updatedData.selectedFinish) {
+                        updatedData.selectedFinish = updatedData.selectedFinish.filter(f => 
+                            !f.name.toLowerCase().includes(finishValue)
+                        );
+                    }
+                    
+                    console.log(`🚨 MATERIAL CORRECTION: Added "${foundMaterial.name}" as material`);
+                } else {
+                    // Store as requested material if not found in database
+                    if (!updatedData.requestedMaterial) {
+                        updatedData.requestedMaterial = finishValue;
+                    } else if (!updatedData.requestedMaterial.includes(finishValue)) {
+                        updatedData.requestedMaterial += ` + ${finishValue}`;
+                    }
+                    console.log(`🔍 Material-like finish "${finishValue}" stored as requested material`);
+                }
+            }
+        }
+    }
+
+    /**
+     * Fuzzy search for category in message text
+     */
+    async fuzzySearchCategory(messageText) {
+        try {
+            const categories = await conversationService.getProductCategories();
+            const lowerMessage = messageText.toLowerCase();
+            
+            // Try exact matches first
+            for (const category of categories) {
+                if (lowerMessage.includes(category.name.toLowerCase())) {
+                    console.log(`🎯 Exact category match: "${category.name}"`);
+                    return category;
+                }
+                
+                // Check sub_names if available
+                if (category.sub_names && category.sub_names.some(sub => 
+                    lowerMessage.includes(sub.toLowerCase()))) {
+                    console.log(`🎯 Category sub_name match: "${category.name}"`);
+                    return category;
+                }
+            }
+            
+            // Try partial matches and common patterns
+            const categoryKeywords = [
+                { patterns: ['flat', 'pouch'], category: 'mylar bags' },
+                { patterns: ['stand', 'up'], category: 'mylar bags' },
+                { patterns: ['folding', 'carton'], category: 'folding cartons' },
+                { patterns: ['rigid', 'box'], category: 'rigid boxes' },
+                { patterns: ['label'], category: 'labels' }
+            ];
+            
+            for (const keyword of categoryKeywords) {
+                if (keyword.patterns.every(pattern => lowerMessage.includes(pattern))) {
+                    const foundCategory = categories.find(cat => 
+                        cat.name.toLowerCase().includes(keyword.category.toLowerCase())
+                    );
+                    if (foundCategory) {
+                        console.log(`🎯 Pattern-based category match: "${foundCategory.name}"`);
+                        return foundCategory;
+                    }
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error in fuzzySearchCategory:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Fuzzy search for product in message text
+     */
+    async fuzzySearchProduct(messageText) {
+        try {
+            const products = await Product.find({ isActive: true }).sort({ sortOrder: 1, name: 1 });
+            const lowerMessage = messageText.toLowerCase();
+            
+            // Try exact matches first
+            for (const product of products) {
+                if (lowerMessage.includes(product.name.toLowerCase())) {
+                    console.log(`🎯 Exact product match: "${product.name}"`);
+                    return product;
+                }
+            }
+            
+            // Try pattern matches
+            const productPatterns = [
+                { pattern: /flat\s*pouch/i, name: 'flat pouch' },
+                { pattern: /stand\s*up\s*pouch/i, name: 'stand up pouch' },
+                { pattern: /folding\s*carton/i, name: 'folding carton' },
+                { pattern: /rigid\s*box/i, name: 'rigid box' }
+            ];
+            
+            for (const patternObj of productPatterns) {
+                if (patternObj.pattern.test(messageText)) {
+                    const foundProduct = products.find(p => 
+                        p.name.toLowerCase().includes(patternObj.name.toLowerCase())
+                    );
+                    if (foundProduct) {
+                        console.log(`🎯 Pattern-based product match: "${foundProduct.name}"`);
+                        return foundProduct;
+                    }
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error in fuzzySearchProduct:', error);
+            return null;
+        }
+    }
+
+    /**
      * Extract entities from Wit.ai response and update conversation data
      */
     async extractAndUpdateConversationData(entities, currentConversationData, messageText = '') {
@@ -589,8 +1232,7 @@ class MessageHandler {
                 "material:material",
                 "finishes:finishes",
                 "quantities:quantities",
-                "skus:skus",
-                "sku:sku"
+                "skus:skus"
             ];
 
             // Sort entities based on custom order
@@ -1288,42 +1930,20 @@ class MessageHandler {
                 return foundFinish;
             }
             
-            // If no exact match, use ChatGPT to find the best match with full message context
+            // If no exact match, try fuzzy matching
             if (!foundFinish && finishes.length > 0) {
-                console.log(`🤖 Using ChatGPT to find best finish match for: "${finishName}" in context: "${fullMessage || finishName}"`);
-                try {
-                    const context = {
-                        availableFinishes: finishes.map(f => ({ name: f.name, erp_id: f.erp_id })),
-                        categoryId: categoryId
-                    };
-                    
-                    // Use full message for better context extraction, fallback to finishName only
-                    const messageToAnalyze = fullMessage || `Find the best matching finish for: "${finishName}"`;
-                    
-                    const aiResponse = await this.aiService.processMessage(messageToAnalyze, context);
-                    
-                    console.log("🤖 ChatGPT finish analysis response:", JSON.stringify(aiResponse?.data?.entities || {}, null, 2));
-                    
-                    if (aiResponse.success && aiResponse.data?.entities?.['finishes:finishes'] && aiResponse.data.entities['finishes:finishes'].length > 0) {
-                        const suggestedFinishes = aiResponse.data.entities['finishes:finishes'];
-                        
-                        // Try to find any of the suggested finishes
-                        for (const suggestedFinishEntity of suggestedFinishes) {
-                            const suggestedFinish = suggestedFinishEntity.value || suggestedFinishEntity.body;
-                            foundFinish = finishes.find(f => 
-                                f.name.toLowerCase() === suggestedFinish.toLowerCase() ||
-                                f.name.toLowerCase().includes(suggestedFinish.toLowerCase()) ||
-                                suggestedFinish.toLowerCase().includes(f.name.toLowerCase())
-                            );
-                            
-                            if (foundFinish) {
-                                console.log(`🤖 ChatGPT found finish match: "${finishName}" → "${foundFinish.name}" (suggested: "${suggestedFinish}")`);
-                                break;
-                            }
-                        }
-                    }
-                } catch (aiError) {
-                    console.error('ChatGPT finish search failed:', aiError);
+                console.log(`🔍 Trying fuzzy match for finish: "${finishName}"`);
+                
+                // Try partial matching
+                foundFinish = finishes.find(finish =>
+                    finish.name.toLowerCase().includes(finishName.toLowerCase()) ||
+                    finishName.toLowerCase().includes(finish.name.toLowerCase())
+                );
+                
+                if (foundFinish) {
+                    console.log(`✅ Found fuzzy finish match: "${finishName}" → "${foundFinish.name}"`);
+                } else {
+                    console.log(`❌ No finish match found for: "${finishName}"`);
                 }
             }
             
@@ -3420,51 +4040,18 @@ Please type the exact name of the material you want to use for your ${category.n
                 f.name.toLowerCase() === messageText.toLowerCase()
             );
             
-            // If no exact match, use ChatGPT to find the best match
+            // If no exact match, try fuzzy matching directly
             if (!selectedFinish) {
-                console.log(`🤖 Using ChatGPT to find best finish match for: "${messageText}"`);
-                try {
-                    const context = {
-                        availableFinishes: finishes.map(f => ({ name: f.name, erp_id: f.erp_id })),
-                        categoryId: categoryId
-                    };
-                    
-                    const aiResponse = await this.aiService.processMessage(messageText, context);
-                    
-                    console.log("🤖 ChatGPT finish analysis response:", JSON.stringify(aiResponse?.data?.entities || {}, null, 2));
-                    
-                    if (aiResponse.success && aiResponse.data?.entities?.['finishes:finishes'] && aiResponse.data.entities['finishes:finishes'].length > 0) {
-                        const suggestedFinishes = aiResponse.data.entities['finishes:finishes'];
-                        
-                        // Try to find any of the suggested finishes
-                        for (const suggestedFinishEntity of suggestedFinishes) {
-                            const suggestedFinish = suggestedFinishEntity.value || suggestedFinishEntity.body;
-                            selectedFinish = finishes.find(f => 
-                                f.name.toLowerCase() === suggestedFinish.toLowerCase() ||
-                                f.name.toLowerCase().includes(suggestedFinish.toLowerCase()) ||
-                                suggestedFinish.toLowerCase().includes(f.name.toLowerCase())
-                            );
-                            
-                            if (selectedFinish) {
-                                console.log(`🤖 ChatGPT found finish match: "${messageText}" → "${selectedFinish.name}" (suggested: "${suggestedFinish}")`);
-                                break;
-                            }
-                        }
-                    }
-                } catch (aiError) {
-                    console.error('ChatGPT finish search failed:', aiError);
-                }
-            }
-            
-            // If still not found, try partial match
-            if (!selectedFinish) {
+                console.log(`🔍 Trying fuzzy match for finish: "${messageText}"`);
+                
+                // Try partial matching
                 selectedFinish = finishes.find(f =>
                     f.name.toLowerCase().includes(messageText.toLowerCase()) ||
                     messageText.toLowerCase().includes(f.name.toLowerCase())
                 );
                 
                 if (selectedFinish) {
-                    console.log(`✅ Found partial finish match: "${messageText}" → "${selectedFinish.name}"`);
+                    console.log(`✅ Found fuzzy finish match: "${messageText}" → "${selectedFinish.name}"`);
                 }
             }
             
