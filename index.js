@@ -295,7 +295,7 @@ async function processMessagesAsync(webhookData, startTime) {
                             // Skip instant acknowledgment for restart messages
                             if (!isRestartMessage) {
                                 try {
-                                    const acknowledgmentMessage = "📝 Thanks for your message! I'm processing your request...";
+                                    const acknowledgmentMessage = "processing...";
                                     
                                     console.log(`📤 [${messageProcessingId}] SENDING instant acknowledgment to ${from} for message: "${messageText}"`);
                                     console.log(`📤 [${messageProcessingId}] Message ID: ${messageId}, Processing ID: ${messageProcessingId}`);

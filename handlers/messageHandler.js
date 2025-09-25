@@ -447,12 +447,21 @@ class MessageHandler {
                 hasSelectedCategory: !!updatedConversationData.selectedCategory?.id,
                 selectedCategory: updatedConversationData.selectedCategory
             });
+            
+            // Skip dimension bypass if we're currently in dimension_input step
+            const skipDimensionBypass = conversationState.currentStep === 'dimension_input';
+            
             const nextStep = await this.determineNextStep(
                 conversationState.currentStep,
                 updatedConversationData,
-                aiResponse.data.entities
+                aiResponse.data.entities,
+                skipDimensionBypass
             );
             console.log('🎯 determineNextStep result:', nextStep);
+            
+            // Don't immediately advance from dimension_input to allow proper handling
+            const shouldUpdateStep = !(conversationState.currentStep === 'dimension_input' && nextStep === 'material_selection');
+            
             // Update conversation state with extracted data
             if (Object.keys(updatedConversationData).length > 0) {
                 // console.log("💾 Updating conversation state with data:", {
@@ -461,10 +470,16 @@ class MessageHandler {
                 //     dataKeys: Object.keys(updatedConversationData)
                 // });
                 
-                const _sss = await conversationService.updateConversationState(from, {
-                    conversationData: updatedConversationData,
-                    currentStep: nextStep
-                });
+                const updateData = {
+                    conversationData: updatedConversationData
+                };
+                
+                // Only update step if we should advance
+                if (shouldUpdateStep) {
+                    updateData.currentStep = nextStep;
+                }
+                
+                const _sss = await conversationService.updateConversationState(from, updateData);
                 
                 // console.log("✅ Conversation state updated successfully");
                 
@@ -733,9 +748,14 @@ Please extract all entities from the user message, selecting materials and finis
         const entities = {};
         const lowerMessage = messageText.toLowerCase();
 
-        // Extract quantities
-        const quantityMatches = messageText.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/gi);
-        if (quantityMatches) {
+        // Extract quantities - avoid numbers that are part of dimensions (e.g., 6x6)
+        // First remove dimension patterns to avoid false quantity matches
+        let quantityText = messageText;
+        // Remove dimension patterns like "6x6", "5 x 5", "10×8×3"
+        quantityText = quantityText.replace(/\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?/gi, '');
+        
+        const quantityMatches = quantityText.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/gi);
+        if (quantityMatches && quantityMatches.length > 0) {
             entities['quantities:quantities'] = quantityMatches.map(match => {
                 let value = match.replace(/,/g, '');
                 if (value.toLowerCase().includes('k')) {
@@ -753,7 +773,7 @@ Please extract all entities from the user message, selecting materials and finis
                     type: "value"
                 };
             });
-            console.log("📊 Manual quantity extraction:", entities['quantities:quantities']);
+            console.log("📊 Manual quantity extraction (dimension-filtered):", entities['quantities:quantities']);
         }
 
         // Extract dimensions
@@ -2256,7 +2276,7 @@ Or just say 'hi' to be guided step by step! 😊`
                         await this.sendMessageOnce(
                             messageId,
                             from,
-                            "Thank you for confirming! Please provide the specific details I requested above."
+                            "Please provide the quote details."
                         );
                 }
                 return;
@@ -2372,7 +2392,7 @@ Or just say 'hi' to be guided step by step! 😊`
     /**
      * Check if a step should be bypassed based on available data
      */
-    shouldBypassStep(step, conversationData) {
+    shouldBypassStep(step, conversationData, skipDimensionBypass = false) {
         switch (step) {
             case 'greeting_response':
                 // Bypass greeting_response if we have category data and user wants a quote
@@ -2386,6 +2406,10 @@ Or just say 'hi' to be guided step by step! 😊`
                 return (conversationData.selectedProduct && conversationData.selectedProduct.id) || conversationData.requestedProductName;
 
             case 'dimension_input':
+                // Don't bypass if we're currently processing dimension input
+                if (skipDimensionBypass) {
+                    return false;
+                }
                 return conversationData.dimensions && conversationData.dimensions.length > 0;
 
             case 'material_selection':
@@ -2488,12 +2512,13 @@ Or just say 'hi' to be guided step by step! 😊`
     /**
      * Determine the next step based on current step and extracted data
      */
-    async determineNextStep(currentStep, conversationData, entities) {
+    async determineNextStep(currentStep, conversationData, entities, skipDimensionBypass = false) {
         console.log('🔍 determineNextStep called with:', {
             currentStep,
             wantsQuote: conversationData.wantsQuote,
             hasSelectedCategory: !!conversationData.selectedCategory?.id,
-            selectedCategory: conversationData.selectedCategory
+            selectedCategory: conversationData.selectedCategory,
+            skipDimensionBypass
         });
 
         // Special case: If we're in 'start' step and have selectedCategory, go to product_selection
@@ -2515,7 +2540,7 @@ Or just say 'hi' to be guided step by step! 😊`
         }
 
         // Use the bypassing logic to determine next step
-        if (this.shouldBypassStep(currentStep, conversationData)) {
+        if (this.shouldBypassStep(currentStep, conversationData, skipDimensionBypass)) {
             const bypassResult = this.getNextStepAfterBypass(currentStep, conversationData);
             console.log('✅ Case 4: bypass logic →', bypassResult);
             return bypassResult;
@@ -2540,7 +2565,10 @@ Or just say 'hi' to be guided step by step! 😊`
             await mongoLogger.info('Processing conversation step', { currentStep, from });
 
             // Check if current step should be bypassed
-            if (this.shouldBypassStep(currentStep, conversationData)) {
+            // Don't bypass dimension_input if we're currently processing it
+            const skipDimensionBypass = currentStep === 'dimension_input';
+            
+            if (this.shouldBypassStep(currentStep, conversationData, skipDimensionBypass)) {
                 await mongoLogger.info(`Bypassing step: ${currentStep}`, {
                     from,
                     conversationData: Object.keys(conversationData)
@@ -3287,22 +3315,9 @@ Would you like to get a quote for mylar bags today?`;
                 }
             }
             
-            // Check if dimensions already exist
-            if (conversationData.dimensions && conversationData.dimensions.length > 0) {
-                console.log("Dimensions already exist, bypassing dimension input step");
-
-                // Bypass dimension_input and move to next step
-                const nextStep = this.getNextStepAfterBypass('dimension_input', conversationData);
-
-                await conversationService.updateConversationState(from, {
-                    currentStep: nextStep
-                });
-
-                // Process the next step
-                const updatedState = await conversationService.getConversationState(from);
-                await this.processConversationFlow(message, messageText, from, updatedState, false);
-                return;
-            }
+            // Don't bypass - we want to handle dimension input properly
+            // Even if dimensions exist, we may need to extract new ones or confirm
+            // The smart extraction has already handled updating dimensions if needed
 
             // Check if we have a selected product
             if (!conversationData.selectedProduct || !conversationData.selectedProduct.id) {
@@ -3348,6 +3363,13 @@ Would you like to get a quote for mylar bags today?`;
                             'conversationData.dimensions': updatedData.dimensions
                         });
 
+                        // Send confirmation message and ask for next step
+                        const dimensionsList = updatedData.dimensions.map(d => `${d.name}: ${d.value}`).join(', ');
+                        await this.whatsappService.sendMessage(
+                            from,
+                            `✅ Perfect! I've captured your dimensions: **${dimensionsList}**\n\nLet me move to the next step...`
+                        );
+
                         // Move to next step
                         const nextStep = this.getNextStepAfterBypass('dimension_input', updatedData);
                         await conversationService.updateConversationState(from, {
@@ -3356,7 +3378,7 @@ Would you like to get a quote for mylar bags today?`;
 
                         // Process the next step without passing the dimension input text
                         const updatedState = await conversationService.getConversationState(from);
-                        const mockMessage = { id: 'dimension-chatgpt-' + Date.now() };
+                        const mockMessage = { id: 'dimension-extracted-' + Date.now() };
                         await this.processConversationFlow(mockMessage, '', from, updatedState, false);
                         return;
                     }
@@ -5824,14 +5846,20 @@ Would you like to:`;
     isDimensionMessage(message) {
         const trimmedMessage = message.trim();
         
-        // Check for common dimension patterns
+        // Check for common dimension patterns (both 2D and 3D)
         const dimensionPatterns = [
-            /^\d+x\d+x\d+$/,           // 5x5x5
-            /^\d+,\d+,\d+$/,           // 5,5,5
-            /^\d+\s+\d+\s+\d+$/,       // 5 5 5
-            /^\d+\.\d+x\d+\.\d+x\d+\.\d+$/, // 5.5x5.5x5.5
-            /^\d+\.\d+,\d+\.\d+,\d+\.\d+$/, // 5.5,5.5,5.5
-            /^[a-zA-Z]:\d+[x,]\d+[x,]\d+$/i, // L:5x5x5 or L:5,5,5
+            /^\d+x\d+$/,               // 6x6 (2D)
+            /^\d+x\d+x\d+$/,           // 5x5x5 (3D)
+            /^\d+,\d+$/,               // 6,6 (2D)
+            /^\d+,\d+,\d+$/,           // 5,5,5 (3D)
+            /^\d+\s+\d+$/,             // 6 6 (2D)
+            /^\d+\s+\d+\s+\d+$/,       // 5 5 5 (3D)
+            /^\d+\.\d+x\d+\.\d+$/,     // 6.5x6.5 (2D with decimals)
+            /^\d+\.\d+x\d+\.\d+x\d+\.\d+$/, // 5.5x5.5x5.5 (3D with decimals)
+            /^\d+\.\d+,\d+\.\d+$/,     // 6.5,6.5 (2D with decimals)
+            /^\d+\.\d+,\d+\.\d+,\d+\.\d+$/, // 5.5,5.5,5.5 (3D with decimals)
+            /^[a-zA-Z]:\d+[x,]\d+$/i,  // W:6x6 or W:6,6 (2D with label)
+            /^[a-zA-Z]:\d+[x,]\d+[x,]\d+$/i, // L:5x5x5 or L:5,5,5 (3D with label)
         ];
         
         return dimensionPatterns.some(pattern => pattern.test(trimmedMessage));
