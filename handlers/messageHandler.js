@@ -814,9 +814,9 @@ Please extract all entities from the user message, selecting materials and finis
                 );
                 if (holographicMaterial) {
                     materialEntities.push({
-                        body: 'holographic',
+                        body: holographicMaterial.name,
                         confidence: 0.95,
-                        value: 'holographic',
+                        value: holographicMaterial.name,
                         type: "value"
                     });
                     console.log("🎯 Manual holographic material detection:", holographicMaterial.name);
@@ -833,9 +833,9 @@ Please extract all entities from the user message, selecting materials and finis
                 if (metallicMaterial) {
                     const keyword = lowerMessage.includes('metallized') ? 'metallized' : 'metallic';
                     materialEntities.push({
-                        body: keyword,
+                        body: metallicMaterial.name,
                         confidence: 0.9,
-                        value: keyword,
+                        value: metallicMaterial.name,
                         type: "value"
                     });
                     console.log(`🧱 Manual metallic material detection: ${keyword} -> ${metallicMaterial.name}`);
@@ -862,13 +862,13 @@ Please extract all entities from the user message, selecting materials and finis
                     if (foundMaterial) {
                         // Avoid duplicates
                         const alreadyAdded = materialEntities.some(entity => 
-                            entity.value === materialKeyword.keyword
+                            entity.value === foundMaterial.name
                         );
                         if (!alreadyAdded) {
                             materialEntities.push({
-                                body: materialKeyword.keyword,
+                                body: foundMaterial.name,
                                 confidence: 0.8,
-                                value: materialKeyword.keyword,
+                                value: foundMaterial.name,
                                 type: "value"
                             });
                             console.log(`🧱 Manual material detection: ${materialKeyword.keyword} -> ${foundMaterial.name}`);
