@@ -832,9 +832,10 @@ Please extract all entities from the user message, selecting materials and finis
         }
 
         // Extract SKUs
-        const skuMatches = messageText.match(/(\d+)\s*skus?/gi);
+        const skuMatches = messageText.match(/(\d+)\s*skus?|(?:number\s+of\s+)?designs?\s*(\d+)|(\d+)\s*designs?/gi);
         if (skuMatches) {
             entities['skus:skus'] = skuMatches.map(match => {
+                // Extract the number from different patterns
                 const skuNumber = match.match(/(\d+)/)[1];
                 return {
                     body: skuNumber,
@@ -891,7 +892,7 @@ Please extract all entities from the user message, selecting materials and finis
                 { keyword: 'pet', searchTerms: ['pet'] },
                 { keyword: 'pe', searchTerms: ['pe', 'polyethylene'] },
                 { keyword: 'mpet', searchTerms: ['mpet'] },
-                { keyword: 'foil', searchTerms: ['foil', 'alu foil', 'alfoil'] },
+                { keyword: 'alu foil', searchTerms: ['alu foil', 'alfoil', 'aluminum foil'] }, // More specific than just 'foil'
                 { keyword: 'paper', searchTerms: ['paper'] }
             ];
             
@@ -930,7 +931,7 @@ Please extract all entities from the user message, selecting materials and finis
             const finishEntities = [];
             
             // Define material keywords that should NOT be treated as finishes
-            const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'foil', 'paper', 'polyethylene'];
+            const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'alu foil', 'aluminum foil', 'paper', 'polyethylene'];
             
             // Common finish keywords (excluding material keywords)
             const finishKeywords = ['spot uv', 'uv coating', 'matte', 'gloss', 'emboss', 'deboss', 'varnish', 'lamination'];
@@ -1129,7 +1130,7 @@ Please extract all entities from the user message, selecting materials and finis
         console.log("🔍 Checking for misclassified materials in finishes...");
         
         const finishEntities = entities['finishes:finishes'] || [];
-        const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'foil', 'paper'];
+        const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'alu foil', 'aluminum foil', 'paper'];
         
         for (const finishEntity of finishEntities) {
             const finishValue = (finishEntity.value || finishEntity.body).toLowerCase();
