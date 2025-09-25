@@ -1205,10 +1205,16 @@ Please extract all entities from the user message, selecting materials and finis
             // Try partial matches and common patterns
             const categoryKeywords = [
                 { patterns: ['flat', 'pouch'], category: 'mylar bags' },
+                { patterns: ['flat', 'bag'], category: 'mylar bags' },
                 { patterns: ['stand', 'up'], category: 'mylar bags' },
+                { patterns: ['standup'], category: 'mylar bags' },
+                { patterns: ['stand-up'], category: 'mylar bags' },
                 { patterns: ['folding', 'carton'], category: 'folding cartons' },
                 { patterns: ['rigid', 'box'], category: 'rigid boxes' },
-                { patterns: ['label'], category: 'labels' }
+                { patterns: ['label'], category: 'labels' },
+                // Generic bag/pouch patterns that should default to mylar bags
+                { patterns: ['bag'], category: 'mylar bags' },
+                { patterns: ['pouch'], category: 'mylar bags' }
             ];
             
             for (const keyword of categoryKeywords) {
@@ -1249,7 +1255,13 @@ Please extract all entities from the user message, selecting materials and finis
             // Try pattern matches
             const productPatterns = [
                 { pattern: /flat\s*pouch/i, name: 'flat pouch' },
+                { pattern: /flat\s*bag/i, name: 'flat pouch' },
                 { pattern: /stand\s*up\s*pouch/i, name: 'stand up pouch' },
+                { pattern: /stand\s*up\s*bag/i, name: 'stand up pouch' },
+                { pattern: /stand-up\s*pouch/i, name: 'stand up pouch' },
+                { pattern: /stand-up\s*bag/i, name: 'stand up pouch' },
+                { pattern: /standup\s*pouch/i, name: 'stand up pouch' },
+                { pattern: /standup\s*bag/i, name: 'stand up pouch' },
                 { pattern: /folding\s*carton/i, name: 'folding carton' },
                 { pattern: /rigid\s*box/i, name: 'rigid box' }
             ];
@@ -1710,13 +1722,19 @@ Please extract all entities from the user message, selecting materials and finis
             // Common product name patterns
             const productPatterns = [
                 /\b(flat\s*pouch)\b/i,
+                /\b(flat\s*bag)\b/i,
                 /\b(stand\s*up\s*pouch)\b/i,
+                /\b(stand\s*up\s*bag)\b/i,
+                /\b(stand-up\s*pouch)\b/i,
+                /\b(stand-up\s*bag)\b/i,
                 /\b(standup\s*pouch)\b/i,
+                /\b(standup\s*bag)\b/i,
                 /\b(side\s*gusset\s*bag)\b/i,
                 /\b(bottom\s*gusset\s*bag)\b/i,
                 /\b(roll\s*stock)\b/i,
                 /\b(spouted\s*pouch)\b/i,
                 /\b(zipper\s*pouch)\b/i,
+                /\b(zipper\s*bag)\b/i,
                 /\b(valve\s*bag)\b/i
             ];
 
