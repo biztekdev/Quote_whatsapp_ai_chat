@@ -341,12 +341,24 @@ class MessageHandler {
                         }).sort({ sortOrder: 1, name: 1 });
                         
                         context.availableMaterials = availableMaterials;
-                        context.availableProducts = availableProducts;
                         context.availableFinishes = availableFinishes;
+                        
+                        // Smart product context: Only send products to ChatGPT if product not yet selected
+                        const hasProduct = conversationState.conversationData?.selectedProduct && 
+                                         Object.keys(conversationState.conversationData.selectedProduct).length > 0;
+                        
+                        if (!hasProduct) {
+                            // Category found but no product selected - send products to ChatGPT for detection
+                            context.availableProducts = availableProducts;
+                            console.log(`🧠 Smart context: Category found (${conversationState.conversationData.selectedCategory.name}) but no product selected. Sending ${availableProducts.length} products to ChatGPT for detection.`);
+                        } else {
+                            console.log(`✅ Smart context: Product already selected (${conversationState.conversationData.selectedProduct.name || 'Unknown'}). Not sending products to ChatGPT.`);
+                        }
+                        
                         context.categoryId = conversationState.conversationData.selectedCategory.id;
                         context.categoryName = conversationState.conversationData.selectedCategory.name;
                         
-                        console.log(`🧱 Found ${availableMaterials.length} materials, ${availableProducts.length} products, ${availableFinishes.length} finishes for category: ${conversationState.conversationData.selectedCategory.name}`);
+                        console.log(`🧱 Context prepared: ${availableMaterials.length} materials, ${availableProducts.length} products ${!hasProduct ? '(sent to ChatGPT)' : '(not sent to ChatGPT)'}, ${availableFinishes.length} finishes`);
                     } catch (materialError) {
                         console.error("❌ Error fetching context data:", materialError);
                     }
@@ -758,23 +770,86 @@ Please extract all entities from the user message, selecting materials and finis
      * Manual entity extraction when ChatGPT fails
      */
     async manualEntityExtraction(messageText, foundCategory, categoryMaterials, categoryFinishes) {
-        console.log("🔧 Minimal manual extraction fallback (ChatGPT should handle most extraction)");
+        console.log("🔧 Manual extraction fallback (when ChatGPT didn't find entities)");
         
         const entities = {};
+        const lowerMessage = messageText.toLowerCase();
         
-        // Only do very basic dimension extraction as fallback
+        // Manual product detection only if ChatGPT didn't find product and we have a category
+        if (foundCategory) {
+            // Handle both cases: foundCategory from search (has _id) or from conversation state (has id)
+            const categoryId = foundCategory._id?.toString() || foundCategory.id;
+            
+            if (categoryId) {
+                const availableProducts = await conversationService.getProductsByCategory(categoryId);
+                console.log(`🔍 Manual product detection fallback in ${availableProducts.length} products for category: ${foundCategory.name}`);
+                
+                // Product detection patterns - match against actual product names
+                for (const product of availableProducts) {
+                    const productName = product.name.toLowerCase();
+                    const productWords = productName.split(/\s+/);
+                    
+                    // Check if message contains the product name or key words
+                    const containsProduct = productWords.every(word => lowerMessage.includes(word)) ||
+                        lowerMessage.includes(productName);
+                    
+                    if (containsProduct) {
+                        entities['product:product'] = [{
+                            body: product.name,
+                            confidence: 0.9,
+                            value: product.name,
+                            type: "value"
+                        }];
+                        console.log(`🎯 Manual product detected: "${messageText}" -> ${product.name}`);
+                        break; // Take first match
+                    }
+                }
+                
+                // Fallback: Common product patterns
+                if (!entities['product:product']) {
+                    const productPatterns = [
+                        { pattern: /standup\s*pouch/i, searchFor: 'stand up pouch' },
+                        { pattern: /standup\s*bag/i, searchFor: 'stand up pouch' },
+                        { pattern: /flat\s*pouch/i, searchFor: 'flat pouch' },
+                        { pattern: /flat\s*bag/i, searchFor: 'flat pouch' },
+                        { pattern: /folding\s*carton/i, searchFor: 'folding carton' },
+                        { pattern: /rigid\s*box/i, searchFor: 'rigid box' }
+                    ];
+                    
+                    for (const { pattern, searchFor } of productPatterns) {
+                        if (pattern.test(lowerMessage)) {
+                            const matchingProduct = availableProducts.find(p => 
+                                p.name.toLowerCase().includes(searchFor)
+                            );
+                            if (matchingProduct) {
+                                entities['product:product'] = [{
+                                    body: matchingProduct.name,
+                                    confidence: 0.7, // Lower confidence for pattern match
+                                    value: matchingProduct.name,
+                                    type: "value"
+                                }];
+                                console.log(`🎯 Manual product pattern detected: "${pattern}" -> ${matchingProduct.name}`);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Basic dimension extraction as fallback
         const dimensionMatches = messageText.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/gi);
         if (dimensionMatches) {
             entities['dimensions:dimensions'] = dimensionMatches.map(match => ({
                 body: match,
-                confidence: 0.7, // Lower confidence since ChatGPT should handle this
+                confidence: 0.7,
                 value: match,
                 type: "value"
             }));
             console.log("📏 Basic dimension fallback:", entities['dimensions:dimensions']);
         }
         
-        console.log("🔧 Manual extraction completed (minimal fallback):", JSON.stringify(entities, null, 2));
+        console.log("🔧 Manual extraction completed:", JSON.stringify(entities, null, 2));
         return entities;
     }
 
