@@ -319,7 +319,7 @@ class MessageHandler {
             try {
                 console.log("🤖 Processing message with ChatGPT:", messageText);
                 
-                // Prepare context for ChatGPT - include available materials if we have a category
+                // Prepare context for ChatGPT - include available materials and products if we have a category
                 const context = {};
                 if (conversationState.conversationData?.selectedCategory?.id) {
                     try {
@@ -330,11 +330,25 @@ class MessageHandler {
                             isActive: true 
                         }).sort({ sortOrder: 1, name: 1 });
                         
+                        // Get available products for the selected category
+                        const availableProducts = await conversationService.getProductsByCategory(conversationState.conversationData.selectedCategory.id);
+                        
+                        // Get available finishes for the selected category
+                        const ProductFinish = (await import('../models/finishModel.js')).ProductFinish;
+                        const availableFinishes = await ProductFinish.find({
+                            productCategoryId: conversationState.conversationData.selectedCategory.id,
+                            isActive: true
+                        }).sort({ sortOrder: 1, name: 1 });
+                        
                         context.availableMaterials = availableMaterials;
+                        context.availableProducts = availableProducts;
+                        context.availableFinishes = availableFinishes;
                         context.categoryId = conversationState.conversationData.selectedCategory.id;
-                        console.log(`🧱 Found ${availableMaterials.length} materials for category: ${conversationState.conversationData.selectedCategory.name}`);
+                        context.categoryName = conversationState.conversationData.selectedCategory.name;
+                        
+                        console.log(`🧱 Found ${availableMaterials.length} materials, ${availableProducts.length} products, ${availableFinishes.length} finishes for category: ${conversationState.conversationData.selectedCategory.name}`);
                     } catch (materialError) {
-                        console.error("❌ Error fetching materials for context:", materialError);
+                        console.error("❌ Error fetching context data:", materialError);
                     }
                 }
                 
@@ -744,232 +758,23 @@ Please extract all entities from the user message, selecting materials and finis
      * Manual entity extraction when ChatGPT fails
      */
     async manualEntityExtraction(messageText, foundCategory, categoryMaterials, categoryFinishes) {
-        console.log("🔧 Starting manual entity extraction for:", messageText);
+        console.log("🔧 Minimal manual extraction fallback (ChatGPT should handle most extraction)");
+        
         const entities = {};
-        const lowerMessage = messageText.toLowerCase();
-
-        // Extract quantities - avoid numbers that are part of dimensions (e.g., 6x6) or sizes
-        // First remove dimension patterns and size descriptions to avoid false quantity matches
-        let quantityText = messageText;
         
-        // Remove common dimension patterns with more comprehensive regex
-        quantityText = quantityText.replace(/\d+(?:\.\d+)?\s*[""'']?\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?(?:\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?)?/gi, '');
-        
-        // Remove size/dimension descriptions like "Size: 4" x 6" x 2""
-        quantityText = quantityText.replace(/(?:size|dimension|dimensions?):\s*\d+(?:\.\d+)?\s*[""'']?\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?(?:\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?)?/gi, '');
-        
-        // Remove standalone dimension numbers with quotes like "4"", "6"", "2""
-        quantityText = quantityText.replace(/\b\d+(?:\.\d+)?\s*[""'']\s*/gi, '');
-        
-        // Now extract quantities from the cleaned text, focusing on explicit quantity indicators
-        const quantityMatches = quantityText.match(/(?:quantity|qty|pieces?|units?|bags?|pouches?):\s*(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)|(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)\s*(?:pieces?|units?|bags?|pouches?)/gi);
-        
-        let quantities = [];
-        if (quantityMatches && quantityMatches.length > 0) {
-            quantityMatches.forEach(match => {
-                // Extract the actual number from the match
-                const numberMatch = match.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/i);
-                if (numberMatch) {
-                    let value = numberMatch[1].replace(/,/g, '');
-                    if (value.toLowerCase().includes('k')) {
-                        const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
-                        if (kMatch) {
-                            value = parseFloat(kMatch[1]) * 1000;
-                        }
-                    } else {
-                        value = parseInt(value);
-                    }
-                    quantities.push({
-                        body: numberMatch[1],
-                        confidence: 0.9,
-                        value: value,
-                        type: "value"
-                    });
-                }
-            });
-        }
-        
-        // If no explicit quantity patterns found, look for standalone large numbers (likely quantities)
-        // But exclude small numbers that could be dimensions or SKUs
-        if (quantities.length === 0) {
-            const standaloneNumbers = quantityText.match(/\b(\d{4,}(?:,\d{3})*|\d+k|\d+\.\d+k)\b/gi);
-            if (standaloneNumbers && standaloneNumbers.length > 0) {
-                quantities = standaloneNumbers.map(match => {
-                    let value = match.replace(/,/g, '');
-                    if (value.toLowerCase().includes('k')) {
-                        const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
-                        if (kMatch) {
-                            value = parseFloat(kMatch[1]) * 1000;
-                        }
-                    } else {
-                        value = parseInt(value);
-                    }
-                    return {
-                        body: match,
-                        confidence: 0.8, // Lower confidence for standalone numbers
-                        value: value,
-                        type: "value"
-                    };
-                });
-            }
-        }
-        
-        if (quantities.length > 0) {
-            entities['quantities:quantities'] = quantities;
-            console.log("📊 Manual quantity extraction (dimension-filtered):", entities['quantities:quantities']);
-        }
-
-        // Extract dimensions
+        // Only do very basic dimension extraction as fallback
         const dimensionMatches = messageText.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/gi);
         if (dimensionMatches) {
             entities['dimensions:dimensions'] = dimensionMatches.map(match => ({
                 body: match,
-                confidence: 0.9,
+                confidence: 0.7, // Lower confidence since ChatGPT should handle this
                 value: match,
                 type: "value"
             }));
-            console.log("📏 Manual dimension extraction:", entities['dimensions:dimensions']);
+            console.log("📏 Basic dimension fallback:", entities['dimensions:dimensions']);
         }
-
-        // Extract SKUs
-        const skuMatches = messageText.match(/(\d+)\s*skus?|(?:number\s+of\s+)?designs?\s*(\d+)|(\d+)\s*designs?/gi);
-        if (skuMatches) {
-            entities['skus:skus'] = skuMatches.map(match => {
-                // Extract the number from different patterns
-                const skuNumber = match.match(/(\d+)/)[1];
-                return {
-                    body: skuNumber,
-                    confidence: 0.9,
-                    value: parseInt(skuNumber),
-                    type: "value"
-                };
-            });
-            console.log("🎨 Manual SKU extraction:", entities['skus:skus']);
-        }
-
-        // Extract materials (if category is available)
-        if (foundCategory && categoryMaterials.length > 0) {
-            const materialEntities = [];
-            
-            // Check for holographic specifically (highest priority)
-            if (lowerMessage.includes('holographic')) {
-                const holographicMaterial = categoryMaterials.find(m => 
-                    m.name.toLowerCase().includes('holographic')
-                );
-                if (holographicMaterial) {
-                    materialEntities.push({
-                        body: holographicMaterial.name,
-                        confidence: 0.95,
-                        value: holographicMaterial.name,
-                        type: "value"
-                    });
-                    console.log("🎯 Manual holographic material detection:", holographicMaterial.name);
-                }
-            }
-
-            // Check for metallized/metallic
-            if (lowerMessage.includes('metallized') || lowerMessage.includes('metallic')) {
-                const metallicMaterial = categoryMaterials.find(m => 
-                    m.name.toLowerCase().includes('mpet') || 
-                    m.name.toLowerCase().includes('metallic') || 
-                    m.name.toLowerCase().includes('metallized')
-                );
-                if (metallicMaterial) {
-                    const keyword = lowerMessage.includes('metallized') ? 'metallized' : 'metallic';
-                    materialEntities.push({
-                        body: metallicMaterial.name,
-                        confidence: 0.9,
-                        value: metallicMaterial.name,
-                        type: "value"
-                    });
-                    console.log(`🧱 Manual metallic material detection: ${keyword} -> ${metallicMaterial.name}`);
-                }
-            }
-
-            // Check for other material keywords
-            const materialKeywords = [
-                { keyword: 'kraft', searchTerms: ['kraft'] },
-                { keyword: 'pet', searchTerms: ['pet'] },
-                { keyword: 'pe', searchTerms: ['pe', 'polyethylene'] },
-                { keyword: 'mpet', searchTerms: ['mpet'] },
-                { keyword: 'alu foil', searchTerms: ['alu foil', 'alfoil', 'aluminum foil'] }, // More specific than just 'foil'
-                { keyword: 'paper', searchTerms: ['paper'] }
-            ];
-            
-            for (const materialKeyword of materialKeywords) {
-                if (materialKeyword.searchTerms.some(term => lowerMessage.includes(term))) {
-                    const foundMaterial = categoryMaterials.find(m => 
-                        materialKeyword.searchTerms.some(term => 
-                            m.name.toLowerCase().includes(term)
-                        )
-                    );
-                    if (foundMaterial) {
-                        // Avoid duplicates
-                        const alreadyAdded = materialEntities.some(entity => 
-                            entity.value === foundMaterial.name
-                        );
-                        if (!alreadyAdded) {
-                            materialEntities.push({
-                                body: foundMaterial.name,
-                                confidence: 0.8,
-                                value: foundMaterial.name,
-                                type: "value"
-                            });
-                            console.log(`🧱 Manual material detection: ${materialKeyword.keyword} -> ${foundMaterial.name}`);
-                        }
-                    }
-                }
-            }
-
-            if (materialEntities.length > 0) {
-                entities['material:material'] = materialEntities;
-            }
-        }
-
-        // Extract finishes (if category is available)
-        if (foundCategory && categoryFinishes.length > 0) {
-            const finishEntities = [];
-            
-            // Define material keywords that should NOT be treated as finishes
-            const materialKeywords = ['holographic', 'metallic', 'metallized', 'kraft', 'pet', 'pe', 'mpet', 'alu foil', 'aluminum foil', 'paper', 'polyethylene'];
-            
-            // Common finish keywords (excluding material keywords)
-            const finishKeywords = ['spot uv', 'uv coating', 'matte', 'gloss', 'emboss', 'deboss', 'varnish', 'lamination'];
-            
-            for (const keyword of finishKeywords) {
-                if (lowerMessage.includes(keyword)) {
-                    // Double check this isn't a material keyword
-                    const isMaterialKeyword = materialKeywords.some(matKeyword => 
-                        keyword.toLowerCase().includes(matKeyword) || 
-                        lowerMessage.includes(matKeyword + ' ' + keyword) ||
-                        lowerMessage.includes(keyword + ' ' + matKeyword)
-                    );
-                    
-                    if (!isMaterialKeyword) {
-                        const foundFinish = categoryFinishes.find(f => 
-                            f.name.toLowerCase().includes(keyword)
-                        );
-                        if (foundFinish) {
-                            finishEntities.push({
-                                body: keyword,
-                                confidence: 0.85,
-                                value: keyword,
-                                type: "value"
-                            });
-                            console.log(`✨ Manual finish detection: ${keyword} -> ${foundFinish.name}`);
-                        }
-                    } else {
-                        console.log(`🚫 Skipped "${keyword}" - identified as material keyword, not finish`);
-                    }
-                }
-            }
-
-            if (finishEntities.length > 0) {
-                entities['finishes:finishes'] = finishEntities;
-            }
-        }
-
-        console.log("🔧 Manual extraction completed:", JSON.stringify(entities, null, 2));
+        
+        console.log("🔧 Manual extraction completed (minimal fallback):", JSON.stringify(entities, null, 2));
         return entities;
     }
 
