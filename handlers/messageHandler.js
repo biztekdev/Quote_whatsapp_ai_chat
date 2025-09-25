@@ -748,31 +748,74 @@ Please extract all entities from the user message, selecting materials and finis
         const entities = {};
         const lowerMessage = messageText.toLowerCase();
 
-        // Extract quantities - avoid numbers that are part of dimensions (e.g., 6x6)
-        // First remove dimension patterns to avoid false quantity matches
+        // Extract quantities - avoid numbers that are part of dimensions (e.g., 6x6) or sizes
+        // First remove dimension patterns and size descriptions to avoid false quantity matches
         let quantityText = messageText;
-        // Remove dimension patterns like "6x6", "5 x 5", "10×8×3"
-        quantityText = quantityText.replace(/\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?/gi, '');
         
-        const quantityMatches = quantityText.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/gi);
+        // Remove common dimension patterns with more comprehensive regex
+        quantityText = quantityText.replace(/\d+(?:\.\d+)?\s*[""'']?\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?(?:\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?)?/gi, '');
+        
+        // Remove size/dimension descriptions like "Size: 4" x 6" x 2""
+        quantityText = quantityText.replace(/(?:size|dimension|dimensions?):\s*\d+(?:\.\d+)?\s*[""'']?\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?(?:\s*[x×]\s*\d+(?:\.\d+)?\s*[""'']?)?/gi, '');
+        
+        // Remove standalone dimension numbers with quotes like "4"", "6"", "2""
+        quantityText = quantityText.replace(/\b\d+(?:\.\d+)?\s*[""'']\s*/gi, '');
+        
+        // Now extract quantities from the cleaned text, focusing on explicit quantity indicators
+        const quantityMatches = quantityText.match(/(?:quantity|qty|pieces?|units?|bags?|pouches?):\s*(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)|(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)\s*(?:pieces?|units?|bags?|pouches?)/gi);
+        
+        let quantities = [];
         if (quantityMatches && quantityMatches.length > 0) {
-            entities['quantities:quantities'] = quantityMatches.map(match => {
-                let value = match.replace(/,/g, '');
-                if (value.toLowerCase().includes('k')) {
-                    const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
-                    if (kMatch) {
-                        value = parseFloat(kMatch[1]) * 1000;
+            quantityMatches.forEach(match => {
+                // Extract the actual number from the match
+                const numberMatch = match.match(/(\d+(?:,\d{3})*|\d+k|\d+\.\d+k)/i);
+                if (numberMatch) {
+                    let value = numberMatch[1].replace(/,/g, '');
+                    if (value.toLowerCase().includes('k')) {
+                        const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
+                        if (kMatch) {
+                            value = parseFloat(kMatch[1]) * 1000;
+                        }
+                    } else {
+                        value = parseInt(value);
                     }
-                } else {
-                    value = parseInt(value);
+                    quantities.push({
+                        body: numberMatch[1],
+                        confidence: 0.9,
+                        value: value,
+                        type: "value"
+                    });
                 }
-                return {
-                    body: match,
-                    confidence: 0.9,
-                    value: value,
-                    type: "value"
-                };
             });
+        }
+        
+        // If no explicit quantity patterns found, look for standalone large numbers (likely quantities)
+        // But exclude small numbers that could be dimensions or SKUs
+        if (quantities.length === 0) {
+            const standaloneNumbers = quantityText.match(/\b(\d{4,}(?:,\d{3})*|\d+k|\d+\.\d+k)\b/gi);
+            if (standaloneNumbers && standaloneNumbers.length > 0) {
+                quantities = standaloneNumbers.map(match => {
+                    let value = match.replace(/,/g, '');
+                    if (value.toLowerCase().includes('k')) {
+                        const kMatch = value.match(/(\d+(?:\.\d+)?)k/i);
+                        if (kMatch) {
+                            value = parseFloat(kMatch[1]) * 1000;
+                        }
+                    } else {
+                        value = parseInt(value);
+                    }
+                    return {
+                        body: match,
+                        confidence: 0.8, // Lower confidence for standalone numbers
+                        value: value,
+                        type: "value"
+                    };
+                });
+            }
+        }
+        
+        if (quantities.length > 0) {
+            entities['quantities:quantities'] = quantities;
             console.log("📊 Manual quantity extraction (dimension-filtered):", entities['quantities:quantities']);
         }
 
