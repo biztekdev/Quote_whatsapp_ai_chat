@@ -80,6 +80,9 @@ class MessageHandler {
                                    messageId.includes('material-found-') ||
                                    messageId.includes('material-bypass-') ||
                                    messageId.includes('dimension-selection-') ||
+                                   messageId.includes('dimension-confirmed-') ||
+                                   messageId.includes('dimension-extracted-') ||
+                                   messageId.includes('dimension-processed-') ||
                                    messageId.includes('finish-selection-') ||
                                    messageId.includes('finish-found-') ||
                                    messageId.includes('finish-bypass-') ||

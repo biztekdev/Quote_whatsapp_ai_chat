@@ -59,6 +59,15 @@ class ConversationService {
      */
     async updateConversationState(phone, updates) {
         try {
+            // Validate inputs
+            if (!phone || typeof phone !== 'string') {
+                throw new Error(`Invalid phone number: ${phone}`);
+            }
+            
+            if (!updates || typeof updates !== 'object') {
+                throw new Error(`Invalid updates object: ${updates}`);
+            }
+            
             console.log('🔄 Updating conversation state for', phone, 'with updates:', JSON.stringify(updates, null, 2));
             
             // Separate dot notation updates from regular updates
@@ -94,6 +103,12 @@ class ConversationService {
                 updateObj,
                 { new: true, upsert: true }
             );
+
+            if (!state) {
+                console.error(`❌ Failed to update conversation state for ${phone} - findOneAndUpdate returned null`);
+                console.error('📝 Update object was:', JSON.stringify(updateObj, null, 2));
+                throw new Error(`Failed to update conversation state for ${phone} - database operation returned null`);
+            }
 
             console.log(`🔄 Conversation state updated for ${phone}: ${state.currentStep}`);
             console.log('📋 Updated conversation data:', JSON.stringify(state.conversationData, null, 2));
