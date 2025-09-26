@@ -351,6 +351,7 @@ class MessageHandler {
                             // Category found but no product selected - send products to ChatGPT for detection
                             context.availableProducts = availableProducts;
                             console.log(`🧠 Smart context: Category found (${conversationState.conversationData.selectedCategory.name}) but no product selected. Sending ${availableProducts.length} products to ChatGPT for detection.`);
+                            console.log(`🔍 Available products for ${conversationState.conversationData.selectedCategory.name}:`, availableProducts.map(p => `${p.name} (ID: ${p._id})`));
                         } else {
                             console.log(`✅ Smart context: Product already selected (${conversationState.conversationData.selectedProduct.name || 'Unknown'}). Not sending products to ChatGPT.`);
                         }
@@ -682,6 +683,9 @@ class MessageHandler {
                         isActive: true
                     }).sort({ sortOrder: 1, name: 1 });
 
+                    // Get ALL products for this category
+                    const categoryProducts = await conversationService.getProductsByCategory(foundCategory._id.toString());
+
                     // Get ALL finishes for this category  
                     const categoryFinishes = await ProductFinish.find({
                         productCategoryId: foundCategory._id,
@@ -689,11 +693,15 @@ class MessageHandler {
                     }).sort({ sortOrder: 1, name: 1 });
 
                     console.log(`🔍 Available materials for ${foundCategory.name}:`, categoryMaterials.map(m => `${m.name} (ID: ${m.erp_id})`));
+                    console.log(`🔍 Available products for ${foundCategory.name}:`, categoryProducts.map(p => `${p.name} (ID: ${p._id})`));
                     console.log(`🔍 Available finishes for ${foundCategory.name}:`, categoryFinishes.map(f => `${f.name} (ID: ${f.erp_id})`));
 
                     // Create enhanced context with ALL available options
                     const enhancedContext = `
 IMPORTANT: You are processing a quote request for "${foundCategory.name}" category.
+
+AVAILABLE PRODUCTS (choose ONLY from these):
+${categoryProducts.map(p => `- "${p.name}" (ID: ${p._id})`).join('\n')}
 
 AVAILABLE MATERIALS (choose ONLY from these):
 ${categoryMaterials.map(m => `- "${m.name}" (ID: ${m.erp_id})`).join('\n')}
@@ -704,13 +712,14 @@ ${categoryFinishes.map(f => `- "${f.name}" (ID: ${f.erp_id})`).join('\n')}
 ${foundProduct ? `DETECTED PRODUCT: "${foundProduct.name}"` : ''}
 
 RULES:
-1. For materials: ONLY select from the available materials list above
-2. For finishes: ONLY select from the available finishes list above  
-3. If a word like "holographic" appears, check if it matches any material name (like "PET + CD holographic PET + PE")
-4. Extract quantities, dimensions, SKUs as usual
-5. Return standard wit.ai format with entities
+1. For products: ONLY select from the available products list above
+2. For materials: ONLY select from the available materials list above
+3. For finishes: ONLY select from the available finishes list above  
+4. If a word like "holographic" appears, check if it matches any material name (like "PET + CD holographic PET + PE")
+5. Extract quantities, dimensions, SKUs as usual
+6. Return standard wit.ai format with entities
 
-Please extract all entities from the user message, selecting materials and finishes ONLY from the provided lists.`;
+Please extract all entities from the user message, selecting products, materials and finishes ONLY from the provided lists.`;
 
                     // SINGLE ChatGPT call with full context
                     console.log(`🤖 Making SINGLE ChatGPT call: "${messageText}"`);
@@ -860,6 +869,7 @@ Please extract all entities from the user message, selecting materials and finis
         console.log("🔄 Processing remaining entities:", Object.keys(entities));
 
         const entityProcessingOrder = [
+            'product:product',      // ✅ FIXED: Add product processing first
             'dimensions:dimensions',
             'quantities:quantities',
             'material:material',
@@ -999,6 +1009,52 @@ Please extract all entities from the user message, selecting materials and finis
                 
                 updatedData.skus = !isNaN(skuNum) ? skuNum : skuValue;
                 console.log("✅ Stored SKU:", updatedData.skus);
+                break;
+
+            case 'product:product':
+                console.log(`🎯 Product entity detected - Value: "${value || body}", Confidence: ${confidence}`);
+                
+                // Use slightly lower confidence for product detection to catch more cases
+                if (confidence < 0.4) {
+                    console.log(`🚫 Product entity confidence too low (${confidence}) for auto-selection:`, value || body);
+                    updatedData.requestedProductName = value || body;
+                    break;
+                }
+
+                // Only update product if not already selected
+                if (!updatedData.selectedProduct || !updatedData.selectedProduct.id) {
+                    // Search for product in Product schema
+                    const foundProduct = await this.findProductByName(value || body, updatedData);
+                    if (foundProduct) {
+                        updatedData.selectedProduct = {
+                            id: foundProduct._id.toString(),
+                            erp_id: foundProduct.erp_id,
+                            name: foundProduct.name,
+                            description: foundProduct.description,
+                            basePrice: foundProduct.basePrice
+                        };
+                        console.log(`🎯 Product successfully selected: ${foundProduct.name}`);
+                        
+                        // If category not yet selected, auto-select from product
+                        if (!updatedData.selectedCategory) {
+                            const foundCategory = await this.findCategoryById(foundProduct.categoryId);
+                            if (foundCategory) {
+                                updatedData.selectedCategory = {
+                                    id: foundCategory._id.toString(),
+                                    erp_id: foundCategory.erp_id,
+                                    name: foundCategory.name,
+                                    description: foundCategory.description
+                                };
+                                console.log(`🎯 Auto-selected category from product: ${foundCategory.name}`);
+                            }
+                        }
+                    } else {
+                        console.log(`❌ Product not found: ${value || body}`);
+                        updatedData.requestedProductName = value || body;
+                    }
+                } else {
+                    console.log(`🔄 Product already selected: ${updatedData.selectedProduct.name}, skipping`);
+                }
                 break;
         }
     }
